@@ -57,7 +57,7 @@ class Weather(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot or not message.guild:
+        if (message.author.bot and message.author.id != getattr(self.bot, "tester_id", 0)) or not message.guild:
             return
         content = message.content.strip()
         if not content.startswith(PREFIX):

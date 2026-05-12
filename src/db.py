@@ -52,5 +52,10 @@ async def init_db() -> None:
         await db.commit()
 
 
-def get_db() -> aiosqlite.Connection:
-    return aiosqlite.connect(DB_PATH)
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def get_db():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        yield db

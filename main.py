@@ -24,8 +24,9 @@ def make_bot(bot_number: int) -> commands.Bot:
     intents.voice_states = True
     intents.members = True
 
-    bot = commands.Bot(command_prefix="\x00", intents=intents)  # prefix 사용 안 함 (on_message로 처리)
+    bot = commands.Bot(command_prefix="\x00", intents=intents)
     bot.bot_number = bot_number
+    bot.tester_id = int(os.getenv("TESTER_BOT_ID", "0"))
     return bot
 
 
@@ -36,6 +37,11 @@ async def run_bot(bot_number: int, token: str) -> None:
     async def on_ready():
         print(f"[도돌봇{bot_number:03d}] {bot.user} 온라인")
         await _notify_ready(bot, bot_number)
+
+    for cog in COGS:
+        await bot.load_extension(cog)
+
+    await bot.start(token)
 
 
 async def _notify_ready(bot: commands.Bot, bot_number: int) -> None:
@@ -54,11 +60,6 @@ async def _notify_ready(bot: commands.Bot, bot_number: int) -> None:
                 await ch.send(f"✅ 도돌봇{bot_number:03d} 업데이트 완료. 온라인입니다.")
             except Exception:
                 pass
-
-    for cog in COGS:
-        await bot.load_extension(cog)
-
-    await bot.start(token)
 
 
 async def main() -> None:

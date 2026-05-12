@@ -136,7 +136,7 @@ class Boss(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot or not message.guild:
+        if (message.author.bot and message.author.id != getattr(self.bot, "tester_id", 0)) or not message.guild:
             return
         content = message.content.strip()
         if not content.startswith(PREFIX):
@@ -148,7 +148,12 @@ class Boss(commands.Cog):
             return
 
         cmd = content[len(PREFIX):].strip()
-        await self._dispatch(message, cmd)
+        try:
+            await self._dispatch(message, cmd)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await message.channel.send(f"⚠️ 오류: {e}")
 
     # ── 명령 라우터 ───────────────────────────────────────
 

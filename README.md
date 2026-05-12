@@ -41,6 +41,39 @@
 
 ---
 
+## 로컬 개발 환경
+
+```bash
+# Python 3.11 가상환경 생성
+python3.11 -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+
+# 의존성 설치
+pip install -r requirements.txt
+
+# 봇 실행
+python main.py
+```
+
+## 자동화 테스트
+
+`test_bot.py` 는 별도 테스터 봇을 이용한 E2E 기능 테스트입니다.
+
+```env
+# .env 에 추가
+TESTER_TOKEN=테스터봇_토큰
+TEST_CHANNEL_ID=테스트할_채널_ID
+TESTER_BOT_ID=테스터봇_USER_ID
+```
+
+```bash
+python test_bot.py
+```
+
+테스터 봇은 도돌봇이 배치된 채널에 자동으로 명령어를 전송하고 응답을 검증합니다. 17개 항목 전체 통과 시 정상.
+
+---
+
 ## 설치 및 실행
 
 ```bash
