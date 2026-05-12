@@ -35,6 +35,25 @@ async def run_bot(bot_number: int, token: str) -> None:
     @bot.event
     async def on_ready():
         print(f"[도돌봇{bot_number:03d}] {bot.user} 온라인")
+        await _notify_ready(bot, bot_number)
+
+
+async def _notify_ready(bot: commands.Bot, bot_number: int) -> None:
+    from src.db import get_db
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT guild_id, text_channel_id FROM guild_config WHERE bot_number=?",
+            (bot_number,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    for guild_id, ch_id in rows:
+        ch = bot.get_channel(ch_id)
+        if ch:
+            try:
+                await ch.send(f"✅ 도돌봇{bot_number:03d} 업데이트 완료. 온라인입니다.")
+            except Exception:
+                pass
 
     for cog in COGS:
         await bot.load_extension(cog)
