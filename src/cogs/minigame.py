@@ -91,57 +91,78 @@ class Minigame(commands.Cog):
     # ── 경마 ──────────────────────────────────────────────
 
     async def _cmd_horserace(self, message: discord.Message, head: str, args: list[str]):
-        ICONS = ["🐎", "🏇", "🦄", "🐴", "🐇", "🐆", "🦊", "🐅"]
+        ICONS  = ["🐎", "🏇", "🦄", "🐴", "🐇", "🐆", "🦊", "🐅"]
+        MEDALS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+        CROWD  = [
+            " o   o   o   o   o  \n/|\\ /|\\ /|\\ /|\\ /|\\",
+            "\\o/ \\o/ \\o/ \\o/ \\o/\n |   |   |   |   |  ",
+        ]
 
         if args:
             labels = [a for a in args if a][:8]
         else:
             labels = ["1번", "2번"]
-        n = max(2, min(len(labels), 8))
+        n      = max(2, min(len(labels), 8))
         labels = labels[:n]
         icons  = ICONS[:n]
         TRACK  = 28
         pos    = [0] * n
-        podium: list[int] = []   # 완주 순서
-        MEDALS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+        podium: list[int] = []
 
-        def render(done: bool = False) -> str:
+        def get_comment(tick: int) -> str:
+            if podium:
+                return f"🎊 **{labels[podium[0]]}** 결승 통과!"
+            ranked = sorted(range(n), key=lambda i: -pos[i])
+            leader, second = ranked[0], ranked[1]
+            gap = pos[leader] - pos[second]
+            near = pos[leader] >= TRACK * 0.75
+            if near:
+                return random.choice(["⚡ 막판 스퍼트!", "🔥 결승선이 코앞!", "💨 전력질주 중!"])
+            if gap <= 2:
+                return random.choice([
+                    f"😤 **{labels[leader]}** vs **{labels[second]}** 접전!",
+                    f"🤯 막상막하! 누가 먼저?",
+                    f"👀 **{labels[leader]}**와 **{labels[second]}** 어깨를 나란히!",
+                ])
+            return random.choice([
+                f"🏃 **{labels[leader]}** 독주 중!",
+                f"💪 **{labels[leader]}** 앞서가고 있어요!",
+                f"😰 **{labels[second]}** 따라잡을 수 있을까?",
+            ])
+
+        def render(tick: int, done: bool = False) -> str:
             lines = ["🏇 **경마 진행 중!**" if not done else "🏁 **경마 종료!**", ""]
             for i, lbl in enumerate(labels):
                 p   = min(pos[i], TRACK)
                 ico = icons[i]
-                if p >= TRACK:
-                    bar = ico + "─" * TRACK
-                else:
-                    bar = "╌" * (TRACK - p) + ico + "─" * p
+                bar = (ico + "─" * TRACK) if p >= TRACK else ("╌" * (TRACK - p) + ico + "─" * p)
                 lines.append(f"🏁  {bar}  `{lbl}`")
             if done and podium:
                 lines.append("")
                 for rank, idx in enumerate(podium):
                     lines.append(f"{MEDALS[rank]} **{labels[idx]}**")
+            else:
+                lines.append("")
+                lines.append(get_comment(tick))
+                lines.append(f"```\n{CROWD[tick % 2]}\n```")
             return "\n".join(lines)
 
-        msg = await message.channel.send(render())
+        msg = await message.channel.send(render(0))
 
-        for _ in range(60):
-            await asyncio.sleep(0.5)
+        for tick in range(1, 61):
+            await asyncio.sleep(0.6)
             for i in range(n):
                 if pos[i] < TRACK:
-                    # 가중치: 0칸(15%), 1칸(40%), 2칸(30%), 3칸(15%)
                     pos[i] += random.choices([0, 1, 2, 3], weights=[15, 40, 30, 15])[0]
                     if pos[i] >= TRACK and i not in podium:
                         podium.append(i)
-            await msg.edit(content=render())
+            await msg.edit(content=render(tick))
             if len(podium) == n:
                 break
 
-        # 타임아웃 시 미완주 말 순위 처리
-        remaining = sorted(
-            [i for i in range(n) if i not in podium],
-            key=lambda i: -pos[i],
-        )
+        remaining = sorted([i for i in range(n) if i not in podium], key=lambda i: -pos[i])
         podium.extend(remaining)
-        await msg.edit(content=render(done=True))
+        await msg.edit(content=render(tick, done=True))
 
     # ── 뽑기 ──────────────────────────────────────────────
 
