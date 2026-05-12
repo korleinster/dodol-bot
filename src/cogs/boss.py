@@ -222,8 +222,8 @@ class Boss(commands.Cog):
             await self._cmd_botam_reset(message)
             return
 
-        # z/ㅋ/Z (다음 예약)
-        if head in ("z", "ㅋ", "z+", "ㅋ+", "Z", "Z+"):
+        # z/ㅋ/Z (다음 예약) — 단독 입력 시만 (ㅋ 보스이름은 컷 명령으로 처리)
+        if head in ("z", "ㅋ", "z+", "ㅋ+", "Z", "Z+") and len(parts) == 1:
             include_fixed = "+" in cmd
             tts = head == "Z" or head == "Z+"
             await self._cmd_next(message, include_fixed, tts)

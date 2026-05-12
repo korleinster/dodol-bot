@@ -33,8 +33,9 @@ def boss_matches(boss_name: str, query: str) -> bool:
     if is_chosung_only(q):
         return len(q) >= 3 and q in boss_cs
 
+    # 쿼리에 단독 자음이 섞인 경우(오타) 초성-초성 매칭 제외
     query_cs = get_chosung(q)
-    if query_cs and query_cs in boss_cs:
+    if query_cs and query_cs in boss_cs and not any(c in CHOSUNG_SET for c in q):
         return True
 
     return False
