@@ -236,8 +236,8 @@ class Boss(commands.Cog):
     async def _cmd_boss_list(self, message: discord.Message):
         async with get_db() as db:
             async with db.execute(
-                "SELECT name, respawn_seconds, fixed, fixed_days, fixed_time, spawns_on_open, open_delay_seconds "
-                "FROM bosses WHERE guild_id=? AND bot_number=? ORDER BY name",
+                "SELECT name, respawn_seconds, spawns_on_open, open_delay_seconds "
+                "FROM bosses WHERE guild_id=? AND bot_number=? ORDER BY respawn_seconds, name",
                 (message.guild.id, self.bn),
             ) as cur:
                 rows = [dict(r) async for r in cur]
@@ -246,18 +246,27 @@ class Boss(commands.Cog):
             await message.channel.send("등록된 보스가 없습니다. `.보스등록` 으로 등록하세요.")
             return
 
-        embed = discord.Embed(title="⚔️ 등록된 보스 목록", color=0x5865F2)
+        # 리스폰 시간별 그룹핑
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
         for r in rows:
-            if r["fixed"]:
-                days = json.loads(r["fixed_days"] or "[]")
-                day_str = ",".join(days) if days else "매일"
-                val = f"고정 {r['fixed_time']} ({day_str})"
-            else:
-                val = fmt_seconds(r["respawn_seconds"]) if r["respawn_seconds"] else "리스폰 없음"
-                if r["spawns_on_open"]:
-                    val += f" | 서버기동 스폰 +{fmt_seconds(r['open_delay_seconds'])}"
-            embed.add_field(name=r["name"], value=val, inline=True)
+            sec = r["respawn_seconds"] or 0
+            label = r["name"]
+            if r["spawns_on_open"]:
+                label += f"(+{fmt_seconds(r['open_delay_seconds'])})"
+            groups[sec].append(label)
 
+        lines = []
+        for sec in sorted(groups):
+            names = "  ".join(groups[sec])
+            lines.append(f"`{fmt_seconds(sec)}` {names}")
+
+        embed = discord.Embed(
+            title="⚔️ 등록된 보스 목록",
+            description="\n".join(lines),
+            color=0x5865F2,
+        )
+        embed.set_footer(text=f"총 {len(rows)}개")
         await message.channel.send(embed=embed)
 
     # ── .보스등록 ─────────────────────────────────────────
