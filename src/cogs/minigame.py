@@ -112,10 +112,10 @@ class Minigame(commands.Cog):
             for i, lbl in enumerate(labels):
                 p = min(pos[i], TRACK)
                 if p >= TRACK:
-                    bar = "─" * TRACK + "🐎"
+                    bar = "🐎" + "─" * TRACK
                 else:
-                    bar = "─" * p + "🐎" + "╌" * (TRACK - p)
-                lines.append(f"`{lbl}`  {bar}  🏁")
+                    bar = "╌" * (TRACK - p) + "🐎" + "─" * p
+                lines.append(f"🏁  {bar}  `{lbl}`")
             if done and podium:
                 lines.append("")
                 for rank, idx in enumerate(podium):
