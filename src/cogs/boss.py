@@ -13,7 +13,6 @@ from discord.ext import commands, tasks
 from src.db import get_db
 from src.korean import boss_matches, normalize_time
 
-PREFIX = "."
 CUT_KW  = {"컷", "ㅋ", "cut"}
 MISS_KW = {"멍", "ㅁ"}
 
@@ -112,6 +111,34 @@ def parse_cut_command(text: str) -> dict | None:
     return {"action": action, "query": query.strip(), "time_hm": time_hm}
 
 
+# ── 컷/멍 인라인 버튼 ─────────────────────────────────────────────────────────
+
+class BossActionView(discord.ui.View):
+    def __init__(self, boss_cog: "Boss", guild_id: int, boss_name: str):
+        super().__init__(timeout=600)
+        self.boss_cog  = boss_cog
+        self.guild_id  = guild_id
+        self.boss_name = boss_name
+
+    async def _handle(self, interaction: discord.Interaction, action: str):
+        for item in self.children:
+            item.disabled = True  # type: ignore
+        await interaction.response.edit_message(view=self)
+        result = await self.boss_cog._do_cut_miss(self.guild_id, self.boss_name, action)
+        if isinstance(result, str):
+            await interaction.followup.send(result)
+        else:
+            await interaction.followup.send(embed=result)
+
+    @discord.ui.button(label="✅ 컷", style=discord.ButtonStyle.success)
+    async def cut_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "cut")
+
+    @discord.ui.button(label="😶 멍", style=discord.ButtonStyle.secondary)
+    async def miss_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "miss")
+
+
 # ── Cog ──────────────────────────────────────────────────────────────────────
 
 class Boss(commands.Cog):
@@ -141,7 +168,7 @@ class Boss(commands.Cog):
         if (message.author.bot and message.author.id != getattr(self.bot, "tester_id", 0)) or not message.guild:
             return
         content = message.content.strip()
-        if not content.startswith(PREFIX):
+        if not content:
             return
 
         # 소환된 채널에서만 동작
@@ -149,7 +176,7 @@ class Boss(commands.Cog):
         if assigned and message.channel.id != assigned:
             return
 
-        cmd = content[len(PREFIX):].strip()
+        cmd = content
         try:
             await self._dispatch(message, cmd)
         except Exception as e:
@@ -245,7 +272,7 @@ class Boss(commands.Cog):
                 rows = [dict(r) async for r in cur]
 
         if not rows:
-            await message.channel.send("등록된 보스가 없습니다. `.보스등록` 으로 등록하세요.")
+            await message.channel.send("등록된 보스가 없습니다. `보스등록` 으로 등록하세요.")
             return
 
         # 리스폰 시간별 그룹핑
@@ -282,10 +309,10 @@ class Boss(commands.Cog):
         if not args:
             help_text = (
                 "**보스등록 방법**\n"
-                "`.보스등록 0300 체르투바` — 3시간 리스폰 보스\n"
-                "`.보스등록 3:00 체르(ㅊㄹ)` — 별명 포함 (초성 검색용)\n"
-                "`.보스등록 3:00 체르(ㅊㄹ,체르) 서버기동` — 서버 재시작 시 스폰\n"
-                "`.보스등록 3:00 체르 딜레이 0100` — 서버오픈 후 1시간 딜레이\n"
+                "`보스등록 0300 체르투바` — 3시간 리스폰 보스\n"
+                "`보스등록 3:00 체르(ㅊㄹ)` — 별명 포함 (초성 검색용)\n"
+                "`보스등록 3:00 체르(ㅊㄹ,체르) 서버기동` — 서버 재시작 시 스폰\n"
+                "`보스등록 3:00 체르 딜레이 0100` — 서버오픈 후 1시간 딜레이\n"
                 "\n시간 형식: `0300`(3시간) `0330`(3시간30분) `3:00` `3:30` 모두 가능"
             )
             await message.channel.send(help_text)
@@ -307,7 +334,7 @@ class Boss(commands.Cog):
         # 시간 + 이름 파싱
         time_match = re.match(r"^(\d{1,3}:\d{2}|\d{4})\s+(.+)$", raw)
         if not time_match:
-            await message.channel.send("❌ 형식 오류. `.보스등록` 으로 도움말 확인.")
+            await message.channel.send("❌ 형식 오류. `보스등록` 으로 도움말 확인.")
             return
 
         respawn_sec = parse_boss_time(time_match.group(1))
@@ -419,14 +446,22 @@ class Boss(commands.Cog):
                 await db.commit()
             await message.channel.send(f"✅ **{boss['name']}** 자동예약 → {fmt_seconds(sec)}")
 
-    # ── .보탐 ─────────────────────────────────────────────
+    # ── 보탐 / 보탐+ ──────────────────────────────────────
 
     async def _cmd_botam(self, message: discord.Message, include_fixed: bool):
         async with get_db() as db:
+            count_q = "SELECT COUNT(*) FROM schedules WHERE guild_id=? AND bot_number=? AND notified=0"
+            if not include_fixed:
+                count_q += " AND is_fixed=0"
+            async with db.execute(count_q, (message.guild.id, self.bn)) as cur:
+                total = (await cur.fetchone())[0]
+
             q = "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? AND notified=0"
             if not include_fixed:
                 q += " AND is_fixed=0"
             q += " ORDER BY scheduled_at"
+            if not include_fixed:
+                q += " LIMIT 5"
             async with db.execute(q, (message.guild.id, self.bn)) as cur:
                 rows = [dict(r) async for r in cur]
 
@@ -441,6 +476,11 @@ class Boss(commands.Cog):
             remain = fmt_remain(at - n)
             miss = f" (미입력×{r['miss_count']})" if r["miss_count"] else ""
             lines.append(f"`{at.strftime('%m/%d %H:%M')}` **{r['content']}**{miss}  — {remain}")
+
+        if not include_fixed:
+            title = f"📋 예약 목록 (가까운 5건 / 전체 {total}건)"
+        else:
+            title = f"📋 예약 목록 전체 ({total}건)"
 
         # embed description 최대 4096자 — 초과 시 여러 메시지로 분할
         CHUNK = 4000
@@ -457,8 +497,8 @@ class Boss(commands.Cog):
             body = body[cut:].lstrip("\n")
 
         for i, chunk in enumerate(chunks):
-            title = f"📋 예약 목록 ({len(rows)}건)" if i == 0 else "📋 예약 목록 (계속)"
-            embed = discord.Embed(title=title, description=chunk, color=0x5865F2)
+            t = title if i == 0 else "📋 예약 목록 (계속)"
+            embed = discord.Embed(title=t, description=chunk, color=0x5865F2)
             await message.channel.send(embed=embed)
 
     # ── .보탐 초기화 ──────────────────────────────────────
@@ -498,54 +538,46 @@ class Boss(commands.Cog):
             if tts_cog:
                 await tts_cog.speak(message.guild, f"{row['content']} {remain}")
 
-    # ── 컷/멍 ─────────────────────────────────────────────
+    # ── 컷/멍 공통 로직 ───────────────────────────────────
 
-    async def _cmd_cut_miss(self, message: discord.Message, parsed: dict):
-        action   = parsed["action"]
-        query    = parsed["query"]
-        time_hm  = parsed["time_hm"]
-
-        boss = await self._find_boss(message.guild.id, query)
+    async def _do_cut_miss(
+        self, guild_id: int, query: str, action: str, time_hm: tuple | None = None
+    ) -> discord.Embed | str:
+        boss = await self._find_boss(guild_id, query)
         if not boss:
-            await message.channel.send(f"❌ **{query}** 에 해당하는 보스를 찾을 수 없습니다.")
-            return
+            return f"❌ **{query}** 에 해당하는 보스를 찾을 수 없습니다."
 
         if boss["respawn_seconds"] is None and not boss["fixed"]:
-            await message.channel.send(f"❌ **{boss['name']}** 은 리스폰이 설정되지 않았습니다.")
-            return
+            return f"❌ **{boss['name']}** 은 리스폰이 설정되지 않았습니다."
 
         base_time = now()
         if time_hm:
             h, m = time_hm
             base_time = base_time.replace(hour=h, minute=m, second=0, microsecond=0)
-            # 미래면 하루 전으로
             if base_time > now() + timedelta(minutes=1):
                 base_time -= timedelta(days=1)
 
         if action == "cut":
-            spawn_at = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
+            spawn_at   = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
             miss_count = 0
-            label = "컷"
+            label      = "컷"
         else:
-            # 멍: 직전 스케줄 시각 기준으로 다음 리스폰
-            prev = await self._get_last_schedule(message.guild.id, boss["name"])
+            prev = await self._get_last_schedule(guild_id, boss["name"])
             if prev:
                 base_time = datetime.fromisoformat(prev["scheduled_at"])
-            spawn_at = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
+            spawn_at   = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
             miss_count = (prev["miss_count"] + 1) if prev else 1
-            label = "멍"
+            label      = "멍"
 
         async with get_db() as db:
-            # 기존 미완료 예약 삭제
             await db.execute(
                 "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
-                (message.guild.id, self.bn, boss["name"]),
+                (guild_id, self.bn, boss["name"]),
             )
             await db.execute(
                 """INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
                    VALUES (?,?,?,?,?,?)""",
-                (message.guild.id, self.bn, boss["name"], boss["name"],
-                 spawn_at.isoformat(), miss_count),
+                (guild_id, self.bn, boss["name"], boss["name"], spawn_at.isoformat(), miss_count),
             )
             await db.commit()
 
@@ -556,7 +588,16 @@ class Boss(commands.Cog):
         embed.add_field(name="기준 시각", value=base_time.strftime("%H:%M"))
         embed.add_field(name="다음 리스폰", value=spawn_at.strftime("%m/%d %H:%M"))
         embed.add_field(name="남은 시간", value=fmt_remain(spawn_at - now()))
-        await message.channel.send(embed=embed)
+        return embed
+
+    async def _cmd_cut_miss(self, message: discord.Message, parsed: dict):
+        result = await self._do_cut_miss(
+            message.guild.id, parsed["query"], parsed["action"], parsed["time_hm"]
+        )
+        if isinstance(result, str):
+            await message.channel.send(result)
+        else:
+            await message.channel.send(embed=result)
 
     # ── .오픈타임 ─────────────────────────────────────────
 
@@ -580,7 +621,7 @@ class Boss(commands.Cog):
         if len(args) >= 2:
             sec = parse_hms(args[0])
             if sec is None:
-                await message.channel.send("❌ 형식: `.오픈타임 시:분:초 보스이름`")
+                await message.channel.send("❌ 형식: `오픈타임 시:분:초 보스이름`")
                 return
             boss_q = " ".join(args[1:])
             boss = await self._find_boss(message.guild.id, boss_q)
@@ -765,7 +806,8 @@ class Boss(commands.Cog):
                 description=f"**{r['content']}** {miss_str}— {remain}",
                 color=0xED4245,
             )
-            await channel.send(embed=embed)
+            view = BossActionView(self, r["guild_id"], r["boss_name"]) if r["boss_name"] else None
+            await channel.send(embed=embed, view=view)
 
             tts_cog = self.bot.get_cog("TTS")
             if tts_cog:
@@ -792,6 +834,49 @@ class Boss(commands.Cog):
                             (r["guild_id"], self.bn, r["boss_name"], r["content"], next_at.isoformat()),
                         )
                         await db.commit()
+
+        # ── 자동 미입력 처리 ──────────────────────────────
+        async with get_db() as db:
+            async with db.execute(
+                """SELECT s.guild_id, s.boss_name, s.scheduled_at, s.miss_count,
+                          b.respawn_seconds, b.auto_schedule_seconds, gc.text_channel_id
+                   FROM schedules s
+                   JOIN bosses b ON s.guild_id=b.guild_id AND s.bot_number=b.bot_number AND s.boss_name=b.name
+                   JOIN guild_config gc ON s.guild_id=gc.guild_id AND s.bot_number=gc.bot_number
+                   WHERE s.bot_number=? AND s.notified=1 AND s.boss_name IS NOT NULL
+                   ORDER BY s.scheduled_at DESC""",
+                (self.bn,),
+            ) as cur:
+                notified = [dict(r) async for r in cur]
+
+        latest: dict[tuple, dict] = {}
+        for row in notified:
+            key = (row["guild_id"], row["boss_name"])
+            if key not in latest:
+                latest[key] = row
+
+        for (guild_id, boss_name), row in latest.items():
+            at = datetime.fromisoformat(row["scheduled_at"])
+            if at + timedelta(seconds=row["auto_schedule_seconds"]) > n:
+                continue
+            if not row["respawn_seconds"]:
+                continue
+            async with get_db() as db:
+                async with db.execute(
+                    "SELECT 1 FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
+                    (guild_id, self.bn, boss_name),
+                ) as cur:
+                    if await cur.fetchone():
+                        continue
+                new_at = at + timedelta(seconds=row["respawn_seconds"])
+                await db.execute(
+                    """INSERT INTO schedules
+                       (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
+                       VALUES (?,?,?,?,?,?)""",
+                    (guild_id, self.bn, boss_name, boss_name,
+                     new_at.isoformat(), row["miss_count"] + 1),
+                )
+                await db.commit()
 
     @check_schedules.before_loop
     async def before_check(self):

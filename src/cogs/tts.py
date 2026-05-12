@@ -10,7 +10,6 @@ from discord.ext import commands
 import edge_tts
 
 VOICE = "ko-KR-SunHiNeural"
-PREFIX = "."
 
 RESTART_KW = {"정신차려", "재시작"}
 
@@ -47,14 +46,14 @@ class TTS(commands.Cog):
         if (message.author.bot and message.author.id != getattr(self.bot, "tester_id", 0)) or not message.guild:
             return
         content = message.content.strip()
-        if not content.startswith(PREFIX):
+        if not content:
             return
 
         assigned = await self.get_text_channel(message.guild.id)
         if assigned and message.channel.id != assigned:
             return
 
-        cmd = content[len(PREFIX):].strip()
+        cmd = content
 
         if cmd.lower().startswith("v "):
             text = cmd[2:].strip()

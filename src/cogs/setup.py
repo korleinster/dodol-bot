@@ -3,9 +3,6 @@ import discord
 from discord.ext import commands
 from src.db import get_db, ensure_default_bosses
 
-PREFIX = "."
-
-
 class Setup(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -45,10 +42,10 @@ class Setup(commands.Cog):
         if (message.author.bot and message.author.id != getattr(self.bot, "tester_id", 0)) or not message.guild:
             return
         content = message.content.strip()
-        if not content.startswith(PREFIX):
+        if not content:
             return
 
-        cmd = content[len(PREFIX):].strip()
+        cmd = content
         await self._dispatch(message, cmd)
 
     # ── 명령 파서 ─────────────────────────────────────────
@@ -81,7 +78,7 @@ class Setup(commands.Cog):
                 rows = [dict(r) async for r in cur]
 
         if not rows:
-            await message.channel.send("아직 소환된 봇이 없습니다. `.소환 도돌봇001` 으로 이 채널에 봇을 배치하세요.")
+            await message.channel.send("아직 소환된 봇이 없습니다. `소환 도돌봇001` 으로 이 채널에 봇을 배치하세요.")
             return
 
         lines = []
@@ -131,7 +128,7 @@ class Setup(commands.Cog):
     async def _cmd_status(self, message: discord.Message):
         cfg = await self.get_config(message.guild.id)
         if not cfg:
-            await message.channel.send(f"도돌봇{self.bn:03d} 은 아직 배치되지 않았습니다. `.소환 도돌봇{self.bn:03d}` 을 입력하세요.")
+            await message.channel.send(f"도돌봇{self.bn:03d} 은 아직 배치되지 않았습니다. `소환 도돌봇{self.bn:03d}` 을 입력하세요.")
             return
 
         tch = message.guild.get_channel(cfg["text_channel_id"])

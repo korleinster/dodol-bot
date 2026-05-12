@@ -84,91 +84,91 @@ class Tester(discord.Client):
         await asyncio.sleep(1)
 
         # ── 도움말 ────────────────────────────────────────
-        msg = await self.send_and_wait(".메뉴")
-        self.check("도움말 (.메뉴)", msg, "도돌봇")
+        msg = await self.send_and_wait("메뉴")
+        self.check("도움말 (메뉴)", msg, "도돌봇")
 
         await asyncio.sleep(1)
 
         # ── 보스 등록 ─────────────────────────────────────
-        msg = await self.send_and_wait(".보스등록 0300 테스트보스(ㅌㅅ)")
+        msg = await self.send_and_wait("보스등록 0300 테스트보스(ㅌㅅ)")
         self.check("보스 등록", msg, "등록 완료", "테스트보스")
 
         await asyncio.sleep(1)
 
         # ── 보스 목록 ─────────────────────────────────────
-        msg = await self.send_and_wait(".보스")
+        msg = await self.send_and_wait("보스")
         self.check("보스 목록", msg, "테스트보스")
 
         await asyncio.sleep(1)
 
         # ── 컷 ───────────────────────────────────────────
-        msg = await self.send_and_wait(".테스트보스 컷")
+        msg = await self.send_and_wait("테스트보스 컷")
         self.check("컷 처리", msg, "컷 처리", "다음 리스폰")
 
         await asyncio.sleep(1)
 
         # ── 초성 컷 ───────────────────────────────────────
-        msg = await self.send_and_wait(".ㅌㅅ ㅋ")
-        self.check("초성 컷 (.ㅌㅅ ㅋ)", msg, "컷 처리")
+        msg = await self.send_and_wait("ㅌㅅ ㅋ")
+        self.check("초성 컷 (ㅌㅅ ㅋ)", msg, "컷 처리")
 
         await asyncio.sleep(1)
 
         # ── 멍 ───────────────────────────────────────────
-        msg = await self.send_and_wait(".테스트보스 멍")
+        msg = await self.send_and_wait("테스트보스 멍")
         self.check("멍 처리", msg, "멍 처리")
 
         await asyncio.sleep(1)
 
         # ── 초성 멍 ───────────────────────────────────────
-        msg = await self.send_and_wait(".ㅌㅅ ㅁ")
-        self.check("초성 멍 (.ㅌㅅ ㅁ)", msg, "멍 처리")
+        msg = await self.send_and_wait("ㅌㅅ ㅁ")
+        self.check("초성 멍 (ㅌㅅ ㅁ)", msg, "멍 처리")
 
         await asyncio.sleep(1)
 
         # ── 보탐 ─────────────────────────────────────────
-        msg = await self.send_and_wait(".보탐")
+        msg = await self.send_and_wait("보탐")
         self.check("보탐 (예약 목록)", msg, "테스트보스")
 
         await asyncio.sleep(1)
 
         # ── 임의 예약 ─────────────────────────────────────
-        msg = await self.send_and_wait(".23:59 테스트알림")
+        msg = await self.send_and_wait("23:59 테스트알림")
         self.check("임의 예약", msg, "테스트알림", "예약 완료")
 
         await asyncio.sleep(1)
 
         # ── 예약 삭제 ─────────────────────────────────────
-        msg = await self.send_and_wait(".테스트알림 삭제")
+        msg = await self.send_and_wait("테스트알림 삭제")
         self.check("예약 삭제", msg, "삭제")
 
         await asyncio.sleep(1)
 
         # ── 초기화 ────────────────────────────────────────
-        msg = await self.send_and_wait(".초기화")
+        msg = await self.send_and_wait("초기화")
         self.check("전체 초기화", msg, "초기화")
 
         await asyncio.sleep(1)
 
         # ── 날씨 ─────────────────────────────────────────
-        msg = await self.send_and_wait(".날씨", timeout=10.0)
+        msg = await self.send_and_wait("날씨", timeout=10.0)
         self.check("날씨", msg, "날씨 예보")
 
         await asyncio.sleep(1)
 
         # ── 시세 ─────────────────────────────────────────
-        msg = await self.send_and_wait(".시세 싸울아비 장검", timeout=10.0)
+        msg = await self.send_and_wait("시세 싸울아비 장검", timeout=10.0)
         self.check("시세 검색", msg, "검색")
 
         await asyncio.sleep(1)
 
         # ── 주사위 ────────────────────────────────────────
-        msg = await self.send_and_wait(".주사위")
+        msg = await self.send_and_wait("주사위")
         self.check("주사위", msg, "🎲")
 
         await asyncio.sleep(1)
 
         # ── 동전 ─────────────────────────────────────────
-        msg = await self.send_and_wait(".동전")
+        msg = await self.send_and_wait("동전")
         # 앞면 또는 뒷면 중 하나만 나옴
         if msg and ("앞면" in (msg.content or "") or "뒷면" in (msg.content or "")):
             results.append(("동전", PASS, ""))
@@ -180,13 +180,13 @@ class Tester(discord.Client):
         await asyncio.sleep(1)
 
         # ── 경마 ─────────────────────────────────────────
-        msg = await self.send_and_wait(".경마", timeout=20.0)
+        msg = await self.send_and_wait("경마", timeout=20.0)
         self.check("경마", msg, "경마")
 
         await asyncio.sleep(1)
 
         # ── 보스 삭제 (정리) ──────────────────────────────
-        msg = await self.send_and_wait(".보스삭제 테스트보스")
+        msg = await self.send_and_wait("보스삭제 테스트보스")
         self.check("보스 삭제 (정리)", msg, "삭제 완료")
 
     def print_summary(self):

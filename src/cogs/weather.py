@@ -3,8 +3,6 @@ import aiohttp
 import discord
 from discord.ext import commands
 
-PREFIX = "."
-
 # 성남시 중심 좌표
 LAT = 37.4449
 LON = 127.1388
@@ -60,14 +58,14 @@ class Weather(commands.Cog):
         if (message.author.bot and message.author.id != getattr(self.bot, "tester_id", 0)) or not message.guild:
             return
         content = message.content.strip()
-        if not content.startswith(PREFIX):
+        if not content:
             return
 
         assigned = await self.get_text_channel(message.guild.id)
         if assigned and message.channel.id != assigned:
             return
 
-        cmd = content[len(PREFIX):].strip()
+        cmd = content
         if cmd == "날씨":
             await self._cmd_weather(message)
 
