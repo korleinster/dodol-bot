@@ -337,18 +337,47 @@ DISCORD_TOKEN_003=token_for_bot_003
 
 ---
 
-## Railway 배포
+## fly.io 배포
 
-1. GitHub에 레포지토리 푸시
-2. Railway에서 새 프로젝트 생성 → GitHub 레포 연결
-3. **Volume 추가**: `/app/data` 경로로 마운트 → `DB_PATH=/app/data/bot.db` 설정
-4. 환경변수 설정 (Variables 탭):
-   - `DISCORD_TOKEN_001`
-   - `PLAYNC_API_KEY`
-   - `DB_PATH=/app/data/bot.db`
-5. 배포 → Service Type: **Worker** 선택
+### 최초 배포
 
-> `nixpacks.toml` 에 FFmpeg 자동 설치가 설정되어 있습니다.
+```bash
+# flyctl 설치
+brew install flyctl
+
+# 로그인
+fly auth login
+
+# 앱 생성
+fly apps create dodol-bot
+
+# Volume 생성 (DB 영구 저장)
+fly volumes create dodolbot_data --region nrt --size 1 --app dodol-bot --yes
+
+# 시크릿 설정
+fly secrets set DISCORD_TOKEN_001=your_token PLAYNC_API_KEY=your_key --app dodol-bot
+
+# 배포
+fly deploy --app dodol-bot
+```
+
+배포 후 Discord에서 `.소환 도돌봇001` 을 입력해 채널을 등록합니다.
+
+### 코드 업데이트
+
+```bash
+fly deploy --app dodol-bot
+```
+
+### 환경변수
+
+| 변수 | 설명 |
+|---|---|
+| `DISCORD_TOKEN_001` | 봇 토큰 |
+| `PLAYNC_API_KEY` | PLAYNC 개발자센터 API 키 |
+| `DB_PATH` | `/app/data/bot.db` (fly.toml에 기본 설정) |
+
+> fly.io Tokyo(nrt) 리전 기준, KST(UTC+9) 시간으로 동작합니다.
 
 ---
 
@@ -358,15 +387,14 @@ DISCORD_TOKEN_003=token_for_bot_003
 DiscordBot/
 ├── main.py                  # 진입점 — 멀티 인스턴스 실행
 ├── requirements.txt
-├── Procfile                 # Railway worker 설정
-├── runtime.txt              # Python 3.11
-├── nixpacks.toml            # FFmpeg 설치
+├── Dockerfile               # fly.io 빌드 (Python 3.11 + FFmpeg)
+├── fly.toml                 # fly.io 앱 설정 + Volume 마운트
 ├── .env.example
 ├── .gitignore
 ├── data/
-│   └── bot.db               # SQLite DB (Railway Volume 마운트)
+│   └── bot.db               # SQLite DB (fly.io Volume 마운트)
 └── src/
-    ├── db.py                # DB 초기화 / 연결
+    ├── db.py                # DB 초기화 / 연결 / 기본 보스 목록
     ├── korean.py            # 초성 검색, 부분 매칭
     └── cogs/
         ├── setup.py         # 소환, 채널 설정
