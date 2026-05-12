@@ -156,7 +156,7 @@ class Tester(discord.Client):
         await asyncio.sleep(1)
 
         # ── 시세 ─────────────────────────────────────────
-        msg = await self.send_and_wait(".시세 집행검", timeout=10.0)
+        msg = await self.send_and_wait(".시세 싸울아비 장검", timeout=10.0)
         self.check("시세 검색", msg, "검색")
 
         await asyncio.sleep(1)
