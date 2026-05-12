@@ -424,7 +424,7 @@ class Boss(commands.Cog):
             q = "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? AND notified=0"
             if not include_fixed:
                 q += " AND is_fixed=0"
-            q += " ORDER BY scheduled_at LIMIT 20"
+            q += " ORDER BY scheduled_at"
             async with db.execute(q, (message.guild.id, self.bn)) as cur:
                 rows = [dict(r) async for r in cur]
 
@@ -436,13 +436,28 @@ class Boss(commands.Cog):
         lines = []
         for r in rows:
             at = datetime.fromisoformat(r["scheduled_at"])
-            diff = at - n
-            remain = fmt_remain(diff)
+            remain = fmt_remain(at - n)
             miss = f" (미입력×{r['miss_count']})" if r["miss_count"] else ""
             lines.append(f"`{at.strftime('%m/%d %H:%M')}` **{r['content']}**{miss}  — {remain}")
 
-        embed = discord.Embed(title="📋 예약 목록", description="\n".join(lines), color=0x5865F2)
-        await message.channel.send(embed=embed)
+        # embed description 최대 4096자 — 초과 시 여러 메시지로 분할
+        CHUNK = 4000
+        body = "\n".join(lines)
+        chunks = []
+        while body:
+            if len(body) <= CHUNK:
+                chunks.append(body)
+                break
+            cut = body.rfind("\n", 0, CHUNK)
+            if cut == -1:
+                cut = CHUNK
+            chunks.append(body[:cut])
+            body = body[cut:].lstrip("\n")
+
+        for i, chunk in enumerate(chunks):
+            title = f"📋 예약 목록 ({len(rows)}건)" if i == 0 else "📋 예약 목록 (계속)"
+            embed = discord.Embed(title=title, description=chunk, color=0x5865F2)
+            await message.channel.send(embed=embed)
 
     # ── .보탐 초기화 ──────────────────────────────────────
 
