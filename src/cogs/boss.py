@@ -1,0 +1,718 @@
+"""보스 등록/관리 + 컷/멍/예약/오픈타임"""
+from __future__ import annotations
+
+import json
+import re
+from datetime import datetime, timedelta
+
+import discord
+from discord.ext import commands, tasks
+
+from src.db import get_db
+from src.korean import boss_matches, normalize_time
+
+PREFIX = "."
+CUT_KW  = {"컷", "ㅋ", "cut"}
+MISS_KW = {"멍"}
+
+
+# ── 시간 파싱 헬퍼 ────────────────────────────────────────────────────────────
+
+def parse_hms(text: str) -> int | None:
+    """'2:00:00' → 7200 초"""
+    m = re.fullmatch(r"(\d+):(\d{2}):(\d{2})", text)
+    if m:
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+    return None
+
+
+def fmt_seconds(sec: int) -> str:
+    h, r = divmod(sec, 3600)
+    m, s = divmod(r, 60)
+    if s:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{h}:{m:02d}:00"
+
+
+def fmt_remain(delta: timedelta) -> str:
+    total = int(delta.total_seconds())
+    if total <= 0:
+        return "출현 중"
+    h, r = divmod(total, 3600)
+    m = r // 60
+    return f"{h}시간 {m}분 후" if h else f"{m}분 후"
+
+
+def now() -> datetime:
+    return datetime.now()
+
+
+def parse_cut_command(text: str) -> dict | None:
+    """
+    지원 형식 (PREFIX 제거 후):
+      체르 컷 / 컷 체르 / 체르투바 컷 / 컷 체르투바
+      체르 컷 0530 / 컷 체르 0530 / 20:45 체르 컷
+      ㅊㄹ ㅋ / ㅋ ㅊㄹ / ㅊㄹㅂㅌ ㅋ
+      체르 멍 / 멍 체르
+    Returns {'action': 'cut'|'miss', 'query': str, 'time_hm': (h,m)|None}
+    """
+    text = text.strip()
+
+    # 앞 시각 '20:45 ...' 또는 '2045 ...'
+    time_hm = None
+    m = re.match(r"^(\d{2}:?\d{2})\s+(.+)$", text)
+    if m:
+        time_hm = normalize_time(m.group(1))
+        text = m.group(2).strip()
+
+    # 뒤 시각 '... 0530'
+    if time_hm is None:
+        m = re.search(r"\s+(\d{4})$", text)
+        if m:
+            time_hm = normalize_time(m.group(1))
+            if time_hm:
+                text = text[:m.start()].strip()
+
+    parts = text.split()
+    if not parts:
+        return None
+
+    action = None
+    query = None
+
+    kw_last  = parts[-1] in CUT_KW or parts[-1] in MISS_KW
+    kw_first = parts[0]  in CUT_KW or parts[0]  in MISS_KW
+
+    if len(parts) >= 2 and kw_last:
+        action = "cut" if parts[-1] in CUT_KW else "miss"
+        query  = " ".join(parts[:-1])
+    elif len(parts) >= 2 and kw_first:
+        action = "cut" if parts[0] in CUT_KW else "miss"
+        query  = " ".join(parts[1:])
+    else:
+        return None
+
+    return {"action": action, "query": query.strip(), "time_hm": time_hm}
+
+
+# ── Cog ──────────────────────────────────────────────────────────────────────
+
+class Boss(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.bn  = bot.bot_number
+        self.check_schedules.start()
+
+    def cog_unload(self):
+        self.check_schedules.cancel()
+
+    # ── 채널 가드 ─────────────────────────────────────────
+
+    async def get_text_channel(self, guild_id: int) -> int | None:
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT text_channel_id FROM guild_config WHERE guild_id=? AND bot_number=?",
+                (guild_id, self.bn),
+            ) as cur:
+                row = await cur.fetchone()
+                return row[0] if row else None
+
+    # ── 이벤트 ────────────────────────────────────────────
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot or not message.guild:
+            return
+        content = message.content.strip()
+        if not content.startswith(PREFIX):
+            return
+
+        # 소환된 채널에서만 동작
+        assigned = await self.get_text_channel(message.guild.id)
+        if assigned and message.channel.id != assigned:
+            return
+
+        cmd = content[len(PREFIX):].strip()
+        await self._dispatch(message, cmd)
+
+    # ── 명령 라우터 ───────────────────────────────────────
+
+    async def _dispatch(self, message: discord.Message, cmd: str):
+        parts = cmd.split()
+        if not parts:
+            return
+        head = parts[0].lower()
+
+        # 보스 목록
+        if head == "보스" and len(parts) == 1:
+            await self._cmd_boss_list(message)
+            return
+
+        # 보스등록 (인수 없으면 도움말)
+        if head == "보스등록":
+            await self._cmd_boss_register(message, parts[1:])
+            return
+
+        # 보스삭제
+        if head == "보스삭제" and len(parts) >= 2:
+            await self._cmd_boss_delete(message, " ".join(parts[1:]))
+            return
+
+        # 자동예약
+        if head == "자동예약":
+            await self._cmd_auto_schedule(message, parts[1:])
+            return
+
+        # 보탐 / 보탐+
+        if head in ("보탐", "보탐+", "bt", "bt+"):
+            await self._cmd_botam(message, include_fixed="+" in head)
+            return
+
+        # 보탐 초기화
+        if cmd.lower() == "보탐 초기화":
+            await self._cmd_botam_reset(message)
+            return
+
+        # z/ㅋ/Z (다음 예약)
+        if head in ("z", "ㅋ", "z+", "ㅋ+", "Z", "Z+"):
+            include_fixed = "+" in cmd
+            tts = head == "Z" or head == "Z+"
+            await self._cmd_next(message, include_fixed, tts)
+            return
+
+        # 오픈타임
+        if head == "오픈타임":
+            await self._cmd_opentime(message, parts[1:])
+            return
+
+        # HH:MM 서버오픈
+        m = re.match(r"^(\d{2}:?\d{2})\s+서버오픈$", cmd)
+        if m:
+            await self._cmd_server_open(message, m.group(1))
+            return
+
+        # 컷/멍 명령 파싱
+        parsed = parse_cut_command(cmd)
+        if parsed:
+            await self._cmd_cut_miss(message, parsed)
+            return
+
+        # HH:MM 내용 — 임의 예약
+        m = re.match(r"^(\d{2}:?\d{2})\s+(.+)$", cmd)
+        if m:
+            hm = normalize_time(m.group(1))
+            if hm:
+                await self._cmd_schedule_custom(message, hm, m.group(2).strip())
+                return
+
+        # 내용 삭제
+        if cmd.endswith(" 삭제"):
+            keyword = cmd[:-3].strip()
+            await self._cmd_delete_schedule(message, keyword)
+            return
+
+    # ── .보스 ─────────────────────────────────────────────
+
+    async def _cmd_boss_list(self, message: discord.Message):
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT name, respawn_seconds, fixed, fixed_days, fixed_time, spawns_on_open, open_delay_seconds "
+                "FROM bosses WHERE guild_id=? AND bot_number=? ORDER BY name",
+                (message.guild.id, self.bn),
+            ) as cur:
+                rows = [dict(r) async for r in cur]
+
+        if not rows:
+            await message.channel.send("등록된 보스가 없습니다. `.보스등록` 으로 등록하세요.")
+            return
+
+        embed = discord.Embed(title="⚔️ 등록된 보스 목록", color=0x5865F2)
+        for r in rows:
+            if r["fixed"]:
+                days = json.loads(r["fixed_days"] or "[]")
+                day_str = ",".join(days) if days else "매일"
+                val = f"고정 {r['fixed_time']} ({day_str})"
+            else:
+                val = fmt_seconds(r["respawn_seconds"]) if r["respawn_seconds"] else "리스폰 없음"
+                if r["spawns_on_open"]:
+                    val += f" | 서버기동 스폰 +{fmt_seconds(r['open_delay_seconds'])}"
+            embed.add_field(name=r["name"], value=val, inline=True)
+
+        await message.channel.send(embed=embed)
+
+    # ── .보스등록 ─────────────────────────────────────────
+
+    async def _cmd_boss_register(self, message: discord.Message, args: list[str]):
+        """
+        .보스등록 시:분:초 이름[(별명)] [고정 (월수금)]
+        .보스등록 시:분:초 이름 고정
+        인수 없으면 도움말
+        """
+        if not args:
+            help_text = (
+                "**보스등록 방법**\n"
+                "`.보스등록 2:00:00 체르투바` — 2시간 리스폰 보스\n"
+                "`.보스등록 2:00:00 체르(ㅊㄹ)` — 별명 포함\n"
+                "`.보스등록 20:00:00 필드이벤트 고정` — 매일 20시 고정\n"
+                "`.보스등록 23:00:00 주말이벤트 고정 (토일)` — 토/일 23시 고정\n"
+                "\n옵션: `서버기동` (서버 재시작 시 스폰), `딜레이 1:00:00` (첫 스폰 딜레이)"
+            )
+            await message.channel.send(help_text)
+            return
+
+        raw = " ".join(args)
+
+        # 고정 여부
+        fixed = False
+        fixed_days: list[str] = []
+        fixed_time: str | None = None
+
+        fixed_match = re.search(r"\s+고정(?:\s+\(([^)]+)\))?", raw)
+        if fixed_match:
+            fixed = True
+            days_str = fixed_match.group(1) or ""
+            fixed_days = [d.strip() for d in re.split(r"[,\s]+", days_str) if d.strip()]
+            raw = raw[:fixed_match.start()].strip()
+
+        # 서버기동 / 딜레이
+        spawns_on_open = False
+        open_delay = 0
+        if "서버기동" in raw:
+            spawns_on_open = True
+            raw = raw.replace("서버기동", "").strip()
+        delay_m = re.search(r"딜레이\s+(\d+:\d{2}:\d{2})", raw)
+        if delay_m:
+            open_delay = parse_hms(delay_m.group(1)) or 0
+            raw = raw[:delay_m.start()].strip()
+
+        # 시간 + 이름 파싱
+        time_match = re.match(r"^(\d+:\d{2}:\d{2})\s+(.+)$", raw)
+        if not time_match:
+            await message.channel.send("❌ 형식 오류. `.보스등록` 으로 도움말 확인.")
+            return
+
+        respawn_sec = parse_hms(time_match.group(1))
+        name_part   = time_match.group(2).strip()
+
+        # 이름(별명) 파싱
+        alias_match = re.match(r"^(.+?)\(([^)]+)\)$", name_part)
+        if alias_match:
+            boss_name = alias_match.group(1).strip()
+            aliases   = [a.strip() for a in alias_match.group(2).split(",")]
+        else:
+            boss_name = name_part
+            aliases   = []
+
+        if fixed:
+            fixed_time = datetime.now().replace(
+                hour=int(time_match.group(1).split(":")[0]),
+                minute=int(time_match.group(1).split(":")[1]),
+                second=0
+            ).strftime("%H:%M:%S")
+            respawn_sec = None
+
+        async with get_db() as db:
+            try:
+                await db.execute(
+                    """INSERT INTO bosses
+                       (guild_id, bot_number, name, aliases, respawn_seconds,
+                        fixed, fixed_days, fixed_time, spawns_on_open, open_delay_seconds)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(guild_id, bot_number, name) DO UPDATE SET
+                           aliases=excluded.aliases,
+                           respawn_seconds=excluded.respawn_seconds,
+                           fixed=excluded.fixed,
+                           fixed_days=excluded.fixed_days,
+                           fixed_time=excluded.fixed_time,
+                           spawns_on_open=excluded.spawns_on_open,
+                           open_delay_seconds=excluded.open_delay_seconds""",
+                    (
+                        message.guild.id, self.bn, boss_name,
+                        json.dumps(aliases, ensure_ascii=False),
+                        respawn_sec, int(fixed),
+                        json.dumps(fixed_days, ensure_ascii=False) if fixed_days else None,
+                        fixed_time, int(spawns_on_open), open_delay,
+                    ),
+                )
+                await db.commit()
+            except Exception as e:
+                await message.channel.send(f"❌ 등록 실패: {e}")
+                return
+
+        embed = discord.Embed(title="✅ 보스 등록 완료", color=0x57F287)
+        embed.add_field(name="이름", value=boss_name)
+        if aliases:
+            embed.add_field(name="별명", value=", ".join(aliases))
+        if fixed:
+            embed.add_field(name="타입", value=f"고정 {fixed_time}")
+        elif respawn_sec:
+            embed.add_field(name="리스폰", value=fmt_seconds(respawn_sec))
+        await message.channel.send(embed=embed)
+
+    # ── .보스삭제 ─────────────────────────────────────────
+
+    async def _cmd_boss_delete(self, message: discord.Message, name: str):
+        async with get_db() as db:
+            cur = await db.execute(
+                "DELETE FROM bosses WHERE guild_id=? AND bot_number=? AND name=?",
+                (message.guild.id, self.bn, name),
+            )
+            await db.commit()
+            if cur.rowcount:
+                await message.channel.send(f"🗑️ **{name}** 삭제 완료.")
+            else:
+                await message.channel.send(f"❌ **{name}** 을(를) 찾을 수 없습니다.")
+
+    # ── .자동예약 ─────────────────────────────────────────
+
+    async def _cmd_auto_schedule(self, message: discord.Message, args: list[str]):
+        if not args:
+            async with get_db() as db:
+                async with db.execute(
+                    "SELECT name, auto_schedule_seconds FROM bosses WHERE guild_id=? AND bot_number=? ORDER BY name",
+                    (message.guild.id, self.bn),
+                ) as cur:
+                    rows = [dict(r) async for r in cur]
+            if not rows:
+                await message.channel.send("등록된 보스가 없습니다.")
+                return
+            lines = [f"**{r['name']}** : {fmt_seconds(r['auto_schedule_seconds'])}" for r in rows]
+            embed = discord.Embed(title="⏰ 자동예약 설정", description="\n".join(lines), color=0x5865F2)
+            await message.channel.send(embed=embed)
+            return
+
+        if len(args) >= 2:
+            sec = parse_hms(args[0])
+            boss_q = " ".join(args[1:])
+            if sec is None:
+                await message.channel.send("❌ 시간 형식: `시:분:초` (예: `0:10:00`)")
+                return
+            boss = await self._find_boss(message.guild.id, boss_q)
+            if not boss:
+                await message.channel.send(f"❌ **{boss_q}** 에 해당하는 보스를 찾을 수 없습니다.")
+                return
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE bosses SET auto_schedule_seconds=? WHERE guild_id=? AND bot_number=? AND name=?",
+                    (sec, message.guild.id, self.bn, boss["name"]),
+                )
+                await db.commit()
+            await message.channel.send(f"✅ **{boss['name']}** 자동예약 → {fmt_seconds(sec)}")
+
+    # ── .보탐 ─────────────────────────────────────────────
+
+    async def _cmd_botam(self, message: discord.Message, include_fixed: bool):
+        async with get_db() as db:
+            q = "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? AND notified=0"
+            if not include_fixed:
+                q += " AND is_fixed=0"
+            q += " ORDER BY scheduled_at LIMIT 20"
+            async with db.execute(q, (message.guild.id, self.bn)) as cur:
+                rows = [dict(r) async for r in cur]
+
+        if not rows:
+            await message.channel.send("예약된 일정이 없습니다.")
+            return
+
+        n = now()
+        lines = []
+        for r in rows:
+            at = datetime.fromisoformat(r["scheduled_at"])
+            diff = at - n
+            remain = fmt_remain(diff)
+            miss = f" (미입력×{r['miss_count']})" if r["miss_count"] else ""
+            lines.append(f"`{at.strftime('%m/%d %H:%M')}` **{r['content']}**{miss}  — {remain}")
+
+        embed = discord.Embed(title="📋 예약 목록", description="\n".join(lines), color=0x5865F2)
+        await message.channel.send(embed=embed)
+
+    # ── .보탐 초기화 ──────────────────────────────────────
+
+    async def _cmd_botam_reset(self, message: discord.Message):
+        async with get_db() as db:
+            await db.execute(
+                "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND is_fixed=0",
+                (message.guild.id, self.bn),
+            )
+            await db.commit()
+        await message.channel.send("🗑️ 고정 제외 예약이 모두 초기화되었습니다.")
+
+    # ── z/ㅋ (다음 예약) ──────────────────────────────────
+
+    async def _cmd_next(self, message: discord.Message, include_fixed: bool, tts: bool):
+        async with get_db() as db:
+            q = "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? AND notified=0"
+            if not include_fixed:
+                q += " AND is_fixed=0"
+            q += " ORDER BY scheduled_at LIMIT 1"
+            async with db.execute(q, (message.guild.id, self.bn)) as cur:
+                row = await cur.fetchone()
+
+        if not row:
+            await message.channel.send("예약된 일정이 없습니다.")
+            return
+
+        row = dict(row)
+        at = datetime.fromisoformat(row["scheduled_at"])
+        remain = fmt_remain(at - now())
+        text = f"**{row['content']}**  {at.strftime('%H:%M')}  ({remain})"
+        await message.channel.send(text)
+
+        if tts:
+            tts_cog = self.bot.get_cog("TTS")
+            if tts_cog:
+                await tts_cog.speak(message.guild, f"{row['content']} {remain}")
+
+    # ── 컷/멍 ─────────────────────────────────────────────
+
+    async def _cmd_cut_miss(self, message: discord.Message, parsed: dict):
+        action   = parsed["action"]
+        query    = parsed["query"]
+        time_hm  = parsed["time_hm"]
+
+        boss = await self._find_boss(message.guild.id, query)
+        if not boss:
+            await message.channel.send(f"❌ **{query}** 에 해당하는 보스를 찾을 수 없습니다.")
+            return
+
+        if boss["respawn_seconds"] is None and not boss["fixed"]:
+            await message.channel.send(f"❌ **{boss['name']}** 은 리스폰이 설정되지 않았습니다.")
+            return
+
+        base_time = now()
+        if time_hm:
+            h, m = time_hm
+            base_time = base_time.replace(hour=h, minute=m, second=0, microsecond=0)
+            # 미래면 하루 전으로
+            if base_time > now() + timedelta(minutes=1):
+                base_time -= timedelta(days=1)
+
+        if action == "cut":
+            spawn_at = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
+            miss_count = 0
+            label = "컷"
+        else:
+            # 멍: 직전 스케줄 시각 기준으로 다음 리스폰
+            prev = await self._get_last_schedule(message.guild.id, boss["name"])
+            if prev:
+                base_time = datetime.fromisoformat(prev["scheduled_at"])
+            spawn_at = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
+            miss_count = (prev["miss_count"] + 1) if prev else 1
+            label = "멍"
+
+        async with get_db() as db:
+            # 기존 미완료 예약 삭제
+            await db.execute(
+                "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
+                (message.guild.id, self.bn, boss["name"]),
+            )
+            await db.execute(
+                """INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
+                   VALUES (?,?,?,?,?,?)""",
+                (message.guild.id, self.bn, boss["name"], boss["name"],
+                 spawn_at.isoformat(), miss_count),
+            )
+            await db.commit()
+
+        embed = discord.Embed(
+            title=f"{'✅' if action == 'cut' else '😶'} {boss['name']} {label} 처리",
+            color=0x57F287 if action == "cut" else 0xFEE75C,
+        )
+        embed.add_field(name="기준 시각", value=base_time.strftime("%H:%M"))
+        embed.add_field(name="다음 리스폰", value=spawn_at.strftime("%m/%d %H:%M"))
+        embed.add_field(name="남은 시간", value=fmt_remain(spawn_at - now()))
+        await message.channel.send(embed=embed)
+
+    # ── .오픈타임 ─────────────────────────────────────────
+
+    async def _cmd_opentime(self, message: discord.Message, args: list[str]):
+        if not args:
+            async with get_db() as db:
+                async with db.execute(
+                    "SELECT name, open_time_seconds, respawn_seconds FROM bosses "
+                    "WHERE guild_id=? AND bot_number=? ORDER BY name",
+                    (message.guild.id, self.bn),
+                ) as cur:
+                    rows = [dict(r) async for r in cur]
+            lines = [
+                f"**{r['name']}** : {fmt_seconds(r['open_time_seconds'] or r['respawn_seconds'] or 0)}"
+                for r in rows
+            ]
+            embed = discord.Embed(title="🕐 오픈타임 설정", description="\n".join(lines) or "없음", color=0x5865F2)
+            await message.channel.send(embed=embed)
+            return
+
+        if len(args) >= 2:
+            sec = parse_hms(args[0])
+            if sec is None:
+                await message.channel.send("❌ 형식: `.오픈타임 시:분:초 보스이름`")
+                return
+            boss_q = " ".join(args[1:])
+            boss = await self._find_boss(message.guild.id, boss_q)
+            if not boss:
+                await message.channel.send(f"❌ **{boss_q}** 을 찾을 수 없습니다.")
+                return
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE bosses SET open_time_seconds=? WHERE guild_id=? AND bot_number=? AND name=?",
+                    (sec, message.guild.id, self.bn, boss["name"]),
+                )
+                await db.commit()
+            await message.channel.send(f"✅ **{boss['name']}** 오픈타임 → {fmt_seconds(sec)}")
+
+    # ── HH:MM 서버오픈 ────────────────────────────────────
+
+    async def _cmd_server_open(self, message: discord.Message, time_raw: str):
+        hm = normalize_time(time_raw)
+        if not hm:
+            return
+        h, m = hm
+        open_time = now().replace(hour=h, minute=m, second=0, microsecond=0)
+        if abs((open_time - now()).total_seconds()) > 8 * 3600:
+            await message.channel.send("❌ 현재 시각 ±8시간 범위의 시각만 입력 가능합니다.")
+            return
+
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT * FROM bosses WHERE guild_id=? AND bot_number=? AND fixed=0",
+                (message.guild.id, self.bn),
+            ) as cur:
+                bosses = [dict(r) async for r in cur]
+
+        count = 0
+        async with get_db() as db:
+            for boss in bosses:
+                # 이미 예약된 보스 스킵
+                async with db.execute(
+                    "SELECT 1 FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
+                    (message.guild.id, self.bn, boss["name"]),
+                ) as cur:
+                    if await cur.fetchone():
+                        continue
+
+                delay_sec = boss.get("open_time_seconds") or boss.get("respawn_seconds") or 0
+                spawn_at = open_time + timedelta(seconds=delay_sec)
+                await db.execute(
+                    """INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
+                       VALUES (?,?,?,?,?,1)""",
+                    (message.guild.id, self.bn, boss["name"], boss["name"], spawn_at.isoformat()),
+                )
+                count += 1
+            await db.commit()
+
+        await message.channel.send(f"✅ 서버오픈 {h:02d}:{m:02d} 기준으로 **{count}개** 보스 미입력 예약 완료.")
+
+    # ── 임의 예약 ─────────────────────────────────────────
+
+    async def _cmd_schedule_custom(self, message: discord.Message, hm: tuple, content: str):
+        h, m = hm
+        at = now().replace(hour=h, minute=m, second=0, microsecond=0)
+        if at < now():
+            at += timedelta(days=1)
+        async with get_db() as db:
+            await db.execute(
+                "INSERT INTO schedules (guild_id, bot_number, content, scheduled_at) VALUES (?,?,?,?)",
+                (message.guild.id, self.bn, content, at.isoformat()),
+            )
+            await db.commit()
+        await message.channel.send(f"📌 **{content}** → {at.strftime('%m/%d %H:%M')} 예약 완료.")
+
+    # ── 예약 삭제 ─────────────────────────────────────────
+
+    async def _cmd_delete_schedule(self, message: discord.Message, keyword: str):
+        async with get_db() as db:
+            cur = await db.execute(
+                "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND content LIKE ? AND is_fixed=0",
+                (message.guild.id, self.bn, f"%{keyword}%"),
+            )
+            await db.commit()
+        await message.channel.send(f"🗑️ **{keyword}** 포함 예약 {cur.rowcount}건 삭제.")
+
+    # ── 헬퍼: 보스 검색 ───────────────────────────────────
+
+    async def _find_boss(self, guild_id: int, query: str) -> dict | None:
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT * FROM bosses WHERE guild_id=? AND bot_number=?",
+                (guild_id, self.bn),
+            ) as cur:
+                rows = [dict(r) async for r in cur]
+
+        for r in rows:
+            names = [r["name"]] + json.loads(r.get("aliases") or "[]")
+            if any(boss_matches(n, query) for n in names):
+                return r
+        return None
+
+    async def _get_last_schedule(self, guild_id: int, boss_name: str) -> dict | None:
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? "
+                "ORDER BY scheduled_at DESC LIMIT 1",
+                (guild_id, self.bn, boss_name),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
+    # ── 주기 체크: 알림 발송 ──────────────────────────────
+
+    @tasks.loop(seconds=30)
+    async def check_schedules(self):
+        threshold = (now() + timedelta(seconds=60)).isoformat()
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT s.*, gc.text_channel_id FROM schedules s "
+                "JOIN guild_config gc ON s.guild_id=gc.guild_id AND s.bot_number=gc.bot_number "
+                "WHERE s.bot_number=? AND s.notified=0 AND s.scheduled_at <= ?",
+                (self.bn, threshold),
+            ) as cur:
+                rows = [dict(r) async for r in cur]
+
+        for r in rows:
+            channel = self.bot.get_channel(r["text_channel_id"])
+            if not channel:
+                continue
+            at = datetime.fromisoformat(r["scheduled_at"])
+            remain = fmt_remain(at - now())
+            miss_str = f"(미입력×{r['miss_count']}) " if r["miss_count"] else ""
+            embed = discord.Embed(
+                title="⚔️ 보스 출현 임박!" if r["boss_name"] else "⏰ 예약 알림",
+                description=f"**{r['content']}** {miss_str}— {remain}",
+                color=0xED4245,
+            )
+            await channel.send(embed=embed)
+
+            # TTS 알림
+            tts_cog = self.bot.get_cog("TTS")
+            if tts_cog:
+                await tts_cog.speak(
+                    channel.guild,
+                    f"{r['content']} {'미입력' * r['miss_count']} {remain}",
+                )
+
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE schedules SET notified=1 WHERE id=?", (r["id"],)
+                )
+                await db.commit()
+
+            # 고정 보스 재예약
+            if r["is_fixed"]:
+                boss = await self._find_boss(r["guild_id"], r["content"])
+                if boss and boss.get("respawn_seconds"):
+                    next_at = at + timedelta(seconds=boss["respawn_seconds"])
+                    async with get_db() as db:
+                        await db.execute(
+                            "INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, is_fixed) "
+                            "VALUES (?,?,?,?,?,1)",
+                            (r["guild_id"], self.bn, r["boss_name"], r["content"], next_at.isoformat()),
+                        )
+                        await db.commit()
+
+    @check_schedules.before_loop
+    async def before_check(self):
+        await self.bot.wait_until_ready()
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Boss(bot))

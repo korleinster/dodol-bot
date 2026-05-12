@@ -1,0 +1,9 @@
+{
+  "bosses": [
+    {"name": "안타라스", "respawn_hours": 48, "description": "지하 던전의 지배자"},
+    {"name": "발라카스", "respawn_hours": 48, "description": "화염의 군주"},
+    {"name": "쿠엔 안타라스", "respawn_hours": 24, "description": "안타라스의 분신"},
+    {"name": "오르펜", "respawn_hours": 12, "description": "어둠의 마법사"},
+    {"name": "제켄", "respawn_hours": 12, "description": "고대 전사"}
+  ]
+}
