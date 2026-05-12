@@ -3,7 +3,7 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-from src.db import init_db
+from src.db import init_db, ensure_default_bosses
 
 load_dotenv()
 
@@ -54,6 +54,7 @@ async def _notify_ready(bot: commands.Bot, bot_number: int) -> None:
             rows = await cur.fetchall()
 
     for guild_id, ch_id in rows:
+        await ensure_default_bosses(guild_id, bot_number)
         ch = bot.get_channel(ch_id)
         if ch:
             try:

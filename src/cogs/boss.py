@@ -350,15 +350,27 @@ class Boss(commands.Cog):
 
     async def _cmd_boss_delete(self, message: discord.Message, name: str):
         async with get_db() as db:
-            cur = await db.execute(
+            async with db.execute(
+                "SELECT is_default FROM bosses WHERE guild_id=? AND bot_number=? AND name=?",
+                (message.guild.id, self.bn, name),
+            ) as cur:
+                row = await cur.fetchone()
+
+        if not row:
+            await message.channel.send(f"❌ **{name}** 을(를) 찾을 수 없습니다.")
+            return
+
+        if row["is_default"]:
+            await message.channel.send(f"🔒 **{name}** 은 기본 보스로 삭제할 수 없습니다.")
+            return
+
+        async with get_db() as db:
+            await db.execute(
                 "DELETE FROM bosses WHERE guild_id=? AND bot_number=? AND name=?",
                 (message.guild.id, self.bn, name),
             )
             await db.commit()
-            if cur.rowcount:
-                await message.channel.send(f"🗑️ **{name}** 삭제 완료.")
-            else:
-                await message.channel.send(f"❌ **{name}** 을(를) 찾을 수 없습니다.")
+        await message.channel.send(f"🗑️ **{name}** 삭제 완료.")
 
     # ── .자동예약 ─────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 """채널 설정 및 소환 명령"""
 import discord
 from discord.ext import commands
-from src.db import get_db
+from src.db import get_db, ensure_default_bosses
 
 PREFIX = "."
 
@@ -113,6 +113,7 @@ class Setup(commands.Cog):
             voice_ch_id = message.author.voice.channel.id
 
         await self.set_config(message.guild.id, message.channel.id, voice_ch_id)
+        await ensure_default_bosses(message.guild.id, self.bn)
 
         tch = message.channel
         vch = message.guild.get_channel(voice_ch_id) if voice_ch_id else None
