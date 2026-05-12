@@ -105,6 +105,20 @@ def parse_cut_command(text: str) -> dict | None:
     elif len(parts) >= 2 and kw_first:
         action = "cut" if parts[0] in CUT_KW else "miss"
         query  = " ".join(parts[1:])
+    elif len(parts) == 1:
+        # 공백 없는 경우: 체르투바컷, ㅊㄹㅌㅂㅋ, ㅋㅊㄹㅌㅂ
+        t = parts[0]
+        for kw in sorted(CUT_KW | MISS_KW, key=len, reverse=True):
+            if t != kw and t.endswith(kw):
+                action = "cut" if kw in CUT_KW else "miss"
+                query  = t[:-len(kw)]
+                return {"action": action, "query": query, "time_hm": time_hm}
+        for kw in ("ㅋ", "ㅁ"):
+            if t != kw and t.startswith(kw):
+                action = "cut" if kw in CUT_KW else "miss"
+                query  = t[len(kw):]
+                return {"action": action, "query": query, "time_hm": time_hm}
+        return None
     else:
         return None
 
