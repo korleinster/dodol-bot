@@ -213,7 +213,7 @@ class Boss(commands.Cog):
             return
 
         # 보탐 / 보탐+
-        if head in ("보탐", "보탐+"):
+        if head in ("보탐", "보탐+", "ㅂㅌ", "ㅂㅌ+"):
             await self._cmd_botam(message, include_fixed="+" in head)
             return
 
