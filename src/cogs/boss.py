@@ -694,28 +694,30 @@ class Boss(commands.Cog):
     @tasks.loop(seconds=30)
     async def check_schedules(self):
         n = now()
-        base_q = (
+        base = (
             "SELECT s.*, gc.text_channel_id FROM schedules s "
             "JOIN guild_config gc ON s.guild_id=gc.guild_id AND s.bot_number=gc.bot_number "
-            "WHERE s.bot_number=? AND s.notified=0 AND s.scheduled_at <= ?"
+            "WHERE s.bot_number=? AND s.notified=0"
         )
+        # 겹치지 않는 구간으로 분리
+        # 5분: (90s, 330s] — 1분 구간 위부터
+        # 1분: (60s, 90s]  — 정각 구간 위부터
+        # 정각: (0s, 60s]
+        t330 = (n + timedelta(seconds=330)).isoformat()
+        t90  = (n + timedelta(seconds=90)).isoformat()
+        t60  = (n + timedelta(seconds=60)).isoformat()
 
-        async def fetch(extra_where: str, threshold_sec: int):
-            t = (n + timedelta(seconds=threshold_sec)).isoformat()
+        async def fetch(where: str, params: tuple) -> list[dict]:
             async with get_db() as db:
-                async with db.execute(
-                    base_q + extra_where, (self.bn, t)
-                ) as cur:
+                async with db.execute(base + where, (self.bn,) + params) as cur:
                     return [dict(r) async for r in cur]
 
-        rows_5min  = await fetch(" AND s.warned_5min=0",  330)
-        rows_1min  = await fetch(" AND s.warned_1min=0",   90)
-        rows_final = await fetch("",                        60)
+        rows_5min  = await fetch(" AND s.warned_5min=0 AND s.scheduled_at > ? AND s.scheduled_at <= ?", (t90,  t330))
+        rows_1min  = await fetch(" AND s.warned_1min=0 AND s.scheduled_at > ? AND s.scheduled_at <= ?", (t60,  t90))
+        rows_final = await fetch(" AND s.scheduled_at <= ?",                                             (t60,))
 
         # ── 5분 전 경고 ───────────────────────────────────
         for r in rows_5min:
-            if r["id"] in {x["id"] for x in rows_final}:
-                continue  # 최종 알림이 이미 처리할 예정
             channel = self.bot.get_channel(r["text_channel_id"])
             if not channel:
                 continue
@@ -733,8 +735,6 @@ class Boss(commands.Cog):
 
         # ── 1분 전 경고 ───────────────────────────────────
         for r in rows_1min:
-            if r["id"] in {x["id"] for x in rows_final}:
-                continue
             channel = self.bot.get_channel(r["text_channel_id"])
             if not channel:
                 continue
@@ -752,7 +752,7 @@ class Boss(commands.Cog):
                 )
                 await db.commit()
 
-        # ── 최종 알림 ─────────────────────────────────────
+        # ── 정각 알림 ─────────────────────────────────────
         for r in rows_final:
             channel = self.bot.get_channel(r["text_channel_id"])
             if not channel:
@@ -761,7 +761,7 @@ class Boss(commands.Cog):
             remain = fmt_remain(at - n)
             miss_str = f"(미입력×{r['miss_count']}) " if r["miss_count"] else ""
             embed = discord.Embed(
-                title="⚔️ 보스 출현 임박!" if r["boss_name"] else "⏰ 예약 알림",
+                title="⚔️ 보스 출현!" if r["boss_name"] else "⏰ 예약 알림",
                 description=f"**{r['content']}** {miss_str}— {remain}",
                 color=0xED4245,
             )
