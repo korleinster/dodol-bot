@@ -99,7 +99,7 @@ class Weather(commands.Cog):
         rain_p = daily.get("precipitation_probability_max", [])
         codes  = daily.get("weathercode", [])
 
-        embed = discord.Embed(title="🌏 성남시 날씨 예보", color=0x5865F2)
+        embed = discord.Embed(title="🌏 날씨 예보", color=0x5865F2)
         for i in range(min(3, len(times))):
             emoji, label = wmo_to_label(int(codes[i]) if codes[i] is not None else 0)
             hi  = f"{t_max[i]:.0f}°" if t_max[i] is not None else "?"

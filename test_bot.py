@@ -151,7 +151,7 @@ class Tester(discord.Client):
 
         # ── 날씨 ─────────────────────────────────────────
         msg = await self.send_and_wait(".날씨", timeout=10.0)
-        self.check("날씨", msg, "성남시")
+        self.check("날씨", msg, "날씨 예보")
 
         await asyncio.sleep(1)
 
