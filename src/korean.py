@@ -31,7 +31,7 @@ def boss_matches(boss_name: str, query: str) -> bool:
 
     boss_cs = get_chosung(boss_name)
     if is_chosung_only(q):
-        return q in boss_cs
+        return len(q) >= 3 and q in boss_cs
 
     query_cs = get_chosung(q)
     if query_cs and query_cs in boss_cs:
