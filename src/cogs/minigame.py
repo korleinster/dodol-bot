@@ -91,17 +91,15 @@ class Minigame(commands.Cog):
     # ── 경마 ──────────────────────────────────────────────
 
     async def _cmd_horserace(self, message: discord.Message, head: str, args: list[str]):
-        n_str = head[2:]
-        if n_str.isdigit():
-            n = int(n_str)
-        elif args and args[0].isdigit():
-            n = int(args[0])
-        else:
-            n = 4
-        n = max(2, min(n, 8))
+        ICONS = ["🐎", "🏇", "🦄", "🐴", "🐇", "🐆", "🦊", "🐅"]
 
-        LABELS = ["1번", "2번", "3번", "4번", "5번", "6번", "7번", "8번"]
-        labels = LABELS[:n]
+        if args:
+            labels = [a for a in args if a][:8]
+        else:
+            labels = ["1번", "2번"]
+        n = max(2, min(len(labels), 8))
+        labels = labels[:n]
+        icons  = ICONS[:n]
         TRACK  = 28
         pos    = [0] * n
         podium: list[int] = []   # 완주 순서
@@ -110,11 +108,12 @@ class Minigame(commands.Cog):
         def render(done: bool = False) -> str:
             lines = ["🏇 **경마 진행 중!**" if not done else "🏁 **경마 종료!**", ""]
             for i, lbl in enumerate(labels):
-                p = min(pos[i], TRACK)
+                p   = min(pos[i], TRACK)
+                ico = icons[i]
                 if p >= TRACK:
-                    bar = "🐎" + "─" * TRACK
+                    bar = ico + "─" * TRACK
                 else:
-                    bar = "╌" * (TRACK - p) + "🐎" + "─" * p
+                    bar = "╌" * (TRACK - p) + ico + "─" * p
                 lines.append(f"🏁  {bar}  `{lbl}`")
             if done and podium:
                 lines.append("")
