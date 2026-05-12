@@ -37,7 +37,7 @@
 | 데이터베이스 | SQLite + aiosqlite |
 | 시세 API | PLAYNC 개발자센터 (`dev-api.plaync.com/l2m/v1.0`) |
 | 날씨 API | Open-Meteo (무료, 키 불필요) |
-| 배포 | Railway (Volume 영구 저장소 + nixpacks FFmpeg) |
+| 배포 | fly.io (Volume 영구 저장소 + Docker FFmpeg) |
 
 ---
 
@@ -205,6 +205,14 @@ PLAYNC API 키는 [PLAYNC 개발자센터](https://developers.plaync.com) 에서
 
 ### 예약 관리
 
+보스 출현 시각이 되면 **3단계 알림**이 자동 발송됩니다.
+
+| 시점 | 색상 | 내용 |
+|---|---|---|
+| 5분 전 | 🟡 노랑 | ⏰ 5분 후 출현 |
+| 1분 전 | 🟠 주황 | ⚠️ 1분 후 출현 |
+| 정각 | 🔴 빨강 | ⚔️ 보스 출현! + TTS |
+
 ```
 .보탐               ← 예약 목록 (고정 제외)
 .보탐+              ← 예약 목록 (고정 포함)
@@ -280,7 +288,7 @@ PLAYNC 개발자센터 API를 통해 거래소 시세를 조회합니다. 서버
 
 ### 날씨
 
-성남시 기준 3일치 날씨를 표시합니다 (Open-Meteo API).
+3일치 날씨를 표시합니다 (Open-Meteo API).
 
 ```
 .날씨                       ← 오늘 / 내일 / 모레 날씨 + 강수확률
@@ -323,7 +331,7 @@ PLAYNC 개발자센터 API를 통해 거래소 시세를 조회합니다. 서버
 
 ## 멀티 인스턴스
 
-하나의 Railway 서비스에서 여러 봇을 동시에 운용할 수 있습니다.
+하나의 서비스에서 여러 봇을 동시에 운용할 수 있습니다.
 
 ```env
 DISCORD_TOKEN_001=token_for_bot_001
