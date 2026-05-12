@@ -57,7 +57,7 @@ class Market(commands.Cog):
             return
 
         if parts[0] == "시세" and len(parts) >= 2:
-            keyword = " ".join(parts[1:])
+            keyword = "".join(parts[1:])
             await self._cmd_search(message, keyword)
 
     # ── .시세 아이템명 ────────────────────────────────────
