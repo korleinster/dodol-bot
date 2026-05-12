@@ -81,7 +81,7 @@ class Setup(commands.Cog):
                 rows = [dict(r) async for r in cur]
 
         if not rows:
-            await message.channel.send("아직 소환된 봇이 없습니다. `.소환 001` 으로 이 채널에 봇을 배치하세요.")
+            await message.channel.send("아직 소환된 봇이 없습니다. `.소환 도돌봇001` 으로 이 채널에 봇을 배치하세요.")
             return
 
         lines = []
@@ -130,7 +130,7 @@ class Setup(commands.Cog):
     async def _cmd_status(self, message: discord.Message):
         cfg = await self.get_config(message.guild.id)
         if not cfg:
-            await message.channel.send(f"도돌봇{self.bn:03d} 은 아직 배치되지 않았습니다. `.소환 {self.bn:03d}` 을 입력하세요.")
+            await message.channel.send(f"도돌봇{self.bn:03d} 은 아직 배치되지 않았습니다. `.소환 도돌봇{self.bn:03d}` 을 입력하세요.")
             return
 
         tch = message.guild.get_channel(cfg["text_channel_id"])

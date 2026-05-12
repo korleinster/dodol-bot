@@ -13,6 +13,8 @@ COGS = [
     "src.cogs.tts",
     "src.cogs.market",
     "src.cogs.minigame",
+    "src.cogs.weather",
+    "src.cogs.help",
 ]
 
 

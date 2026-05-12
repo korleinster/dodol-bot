@@ -59,8 +59,6 @@ class Market(commands.Cog):
         if parts[0] == "시세" and len(parts) >= 2:
             keyword = " ".join(parts[1:])
             await self._cmd_search(message, keyword)
-        elif parts[0] == "서버목록":
-            await self._cmd_servers(message)
 
     # ── .시세 아이템명 ────────────────────────────────────
 
@@ -139,26 +137,6 @@ class Market(commands.Cog):
 
         await message.channel.send(embed=embed)
 
-    # ── .서버목록 ─────────────────────────────────────────
-
-    async def _cmd_servers(self, message: discord.Message):
-        async with aiohttp.ClientSession(headers=self._headers()) as session:
-            servers = await self._get_servers(session)
-
-        if not servers:
-            await message.channel.send("❌ 서버 정보를 가져올 수 없습니다.")
-            return
-
-        embed = discord.Embed(title="🌐 리니지2M 서버 목록", color=0x5865F2)
-        for world in servers:
-            slist = [f"`{s['server_id']}` {s['server_name']}" for s in world.get("servers", [])]
-            embed.add_field(
-                name=world.get("world_name", "월드"),
-                value="\n".join(slist) or "없음",
-                inline=True,
-            )
-        await message.channel.send(embed=embed)
-
     # ── API 호출 ──────────────────────────────────────────
 
     async def _search_items(self, session: aiohttp.ClientSession, keyword: str) -> list[dict]:
@@ -195,17 +173,6 @@ class Market(commands.Cog):
                 return await r.json()
         except Exception:
             return {}
-
-    async def _get_servers(self, session: aiohttp.ClientSession) -> list[dict]:
-        try:
-            async with session.get(f"{BASE_URL}/market/servers") as r:
-                if r.status != 200:
-                    return []
-                data = await r.json()
-                return data if isinstance(data, list) else []
-        except Exception:
-            return []
-
 
 import asyncio  # noqa: E402 — gather 사용
 

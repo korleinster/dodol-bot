@@ -79,11 +79,60 @@ class Minigame(commands.Cog):
                 scores[uid] = scores.get(uid, 0) + 10
                 await message.channel.send(f"🎉 {message.author.mention} 정답 **{secret}**! (+10점)")
 
+        elif head.startswith("경마"):
+            await self._cmd_horserace(message, head, parts[1:])
+
         elif head.startswith("뽑기"):
             await self._cmd_lottery(message, head, parts[1:])
 
         elif head == "랭킹":
             await self._cmd_ranking(message)
+
+    # ── 경마 ──────────────────────────────────────────────
+
+    async def _cmd_horserace(self, message: discord.Message, head: str, args: list[str]):
+        n_str = head[2:]
+        if n_str.isdigit():
+            n = int(n_str)
+        elif args and args[0].isdigit():
+            n = int(args[0])
+        else:
+            n = 4
+        n = max(2, min(n, 8))
+
+        HORSE_NAMES = ["🐴 1번마", "🐎 2번마", "🦄 3번마", "🏇 4번마",
+                       "🐴 5번마", "🐎 6번마", "🦄 7번마", "🏇 8번마"]
+        names = HORSE_NAMES[:n]
+        TRACK = 12
+        pos = [0] * n
+
+        def render(finished_idx: int | None = None) -> str:
+            lines = []
+            for i, nm in enumerate(names):
+                bar = "─" * pos[i] + "🏁" if pos[i] >= TRACK else "─" * pos[i] + "▶" + " " * (TRACK - pos[i])
+                lines.append(f"`{nm}` {bar}")
+            if finished_idx is not None:
+                lines.append(f"\n🏆 **{names[finished_idx]}** 우승!")
+            return "\n".join(lines)
+
+        msg = await message.channel.send("🏁 경마 시작!\n" + render())
+
+        winner_idx = None
+        for _ in range(30):
+            await asyncio.sleep(0.6)
+            for i in range(n):
+                if pos[i] < TRACK:
+                    pos[i] += random.randint(0, 2)
+            # 먼저 결승선 통과한 말 찾기
+            finished = [i for i in range(n) if pos[i] >= TRACK]
+            if finished:
+                winner_idx = finished[0]
+                break
+
+        if winner_idx is None:
+            winner_idx = pos.index(max(pos))
+
+        await msg.edit(content=render(winner_idx))
 
     # ── 뽑기 ──────────────────────────────────────────────
 

@@ -13,25 +13,40 @@ from src.korean import boss_matches, normalize_time
 
 PREFIX = "."
 CUT_KW  = {"컷", "ㅋ", "cut"}
-MISS_KW = {"멍"}
+MISS_KW = {"멍", "ㅁ"}
 
 
 # ── 시간 파싱 헬퍼 ────────────────────────────────────────────────────────────
 
 def parse_hms(text: str) -> int | None:
-    """'2:00:00' → 7200 초"""
+    """'2:00:00' → 7200 초 (하위 호환용)"""
     m = re.fullmatch(r"(\d+):(\d{2}):(\d{2})", text)
     if m:
         return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
     return None
 
 
+def parse_boss_time(text: str) -> int | None:
+    """'3:00' / '0300' / '0330' → seconds. 초 단위 없음.
+    H:MM, HH:MM, HHMM 형식 지원.
+    """
+    m = re.fullmatch(r"(\d{1,3}):(\d{2})", text)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if mn < 60:
+            return h * 3600 + mn * 60
+    m = re.fullmatch(r"(\d{2})(\d{2})", text)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if mn < 60:
+            return h * 3600 + mn * 60
+    return None
+
+
 def fmt_seconds(sec: int) -> str:
     h, r = divmod(sec, 3600)
-    m, s = divmod(r, 60)
-    if s:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{h}:{m:02d}:00"
+    m = r // 60
+    return f"{h}:{m:02d}"
 
 
 def fmt_remain(delta: timedelta) -> str:
@@ -164,12 +179,12 @@ class Boss(commands.Cog):
             return
 
         # 보탐 / 보탐+
-        if head in ("보탐", "보탐+", "bt", "bt+"):
+        if head in ("보탐", "보탐+"):
             await self._cmd_botam(message, include_fixed="+" in head)
             return
 
-        # 보탐 초기화
-        if cmd.lower() == "보탐 초기화":
+        # 예약 전체 초기화
+        if head in ("전체삭제", "초기화", "보스전체삭제"):
             await self._cmd_botam_reset(message)
             return
 
@@ -244,35 +259,23 @@ class Boss(commands.Cog):
 
     async def _cmd_boss_register(self, message: discord.Message, args: list[str]):
         """
-        .보스등록 시:분:초 이름[(별명)] [고정 (월수금)]
-        .보스등록 시:분:초 이름 고정
+        .보스등록 시간 이름[(별명)] [서버기동] [딜레이 시간]
+        시간 형식: 3:00 / 03:00 / 0300 (시:분 or HHMM)
         인수 없으면 도움말
         """
         if not args:
             help_text = (
                 "**보스등록 방법**\n"
-                "`.보스등록 2:00:00 체르투바` — 2시간 리스폰 보스\n"
-                "`.보스등록 2:00:00 체르(ㅊㄹ)` — 별명 포함\n"
-                "`.보스등록 20:00:00 필드이벤트 고정` — 매일 20시 고정\n"
-                "`.보스등록 23:00:00 주말이벤트 고정 (토일)` — 토/일 23시 고정\n"
-                "\n옵션: `서버기동` (서버 재시작 시 스폰), `딜레이 1:00:00` (첫 스폰 딜레이)"
+                "`.보스등록 0300 체르투바` — 3시간 리스폰 보스\n"
+                "`.보스등록 3:00 체르(ㅊㄹ)` — 별명 포함 (초성 검색용)\n"
+                "`.보스등록 3:00 체르(ㅊㄹ,체르) 서버기동` — 서버 재시작 시 스폰\n"
+                "`.보스등록 3:00 체르 딜레이 0100` — 서버오픈 후 1시간 딜레이\n"
+                "\n시간 형식: `0300`(3시간) `0330`(3시간30분) `3:00` `3:30` 모두 가능"
             )
             await message.channel.send(help_text)
             return
 
         raw = " ".join(args)
-
-        # 고정 여부
-        fixed = False
-        fixed_days: list[str] = []
-        fixed_time: str | None = None
-
-        fixed_match = re.search(r"\s+고정(?:\s+\(([^)]+)\))?", raw)
-        if fixed_match:
-            fixed = True
-            days_str = fixed_match.group(1) or ""
-            fixed_days = [d.strip() for d in re.split(r"[,\s]+", days_str) if d.strip()]
-            raw = raw[:fixed_match.start()].strip()
 
         # 서버기동 / 딜레이
         spawns_on_open = False
@@ -280,19 +283,22 @@ class Boss(commands.Cog):
         if "서버기동" in raw:
             spawns_on_open = True
             raw = raw.replace("서버기동", "").strip()
-        delay_m = re.search(r"딜레이\s+(\d+:\d{2}:\d{2})", raw)
+        delay_m = re.search(r"딜레이\s+(\d{1,3}:\d{2}|\d{4})", raw)
         if delay_m:
-            open_delay = parse_hms(delay_m.group(1)) or 0
+            open_delay = parse_boss_time(delay_m.group(1)) or 0
             raw = raw[:delay_m.start()].strip()
 
         # 시간 + 이름 파싱
-        time_match = re.match(r"^(\d+:\d{2}:\d{2})\s+(.+)$", raw)
+        time_match = re.match(r"^(\d{1,3}:\d{2}|\d{4})\s+(.+)$", raw)
         if not time_match:
             await message.channel.send("❌ 형식 오류. `.보스등록` 으로 도움말 확인.")
             return
 
-        respawn_sec = parse_hms(time_match.group(1))
-        name_part   = time_match.group(2).strip()
+        respawn_sec = parse_boss_time(time_match.group(1))
+        if respawn_sec is None:
+            await message.channel.send("❌ 시간 형식 오류. 예: `0300` (3시간) `3:00` `0330` (3시간30분)")
+            return
+        name_part = time_match.group(2).strip()
 
         # 이름(별명) 파싱
         alias_match = re.match(r"^(.+?)\(([^)]+)\)$", name_part)
@@ -303,35 +309,22 @@ class Boss(commands.Cog):
             boss_name = name_part
             aliases   = []
 
-        if fixed:
-            fixed_time = datetime.now().replace(
-                hour=int(time_match.group(1).split(":")[0]),
-                minute=int(time_match.group(1).split(":")[1]),
-                second=0
-            ).strftime("%H:%M:%S")
-            respawn_sec = None
-
         async with get_db() as db:
             try:
                 await db.execute(
                     """INSERT INTO bosses
                        (guild_id, bot_number, name, aliases, respawn_seconds,
-                        fixed, fixed_days, fixed_time, spawns_on_open, open_delay_seconds)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)
+                        spawns_on_open, open_delay_seconds)
+                       VALUES (?,?,?,?,?,?,?)
                        ON CONFLICT(guild_id, bot_number, name) DO UPDATE SET
                            aliases=excluded.aliases,
                            respawn_seconds=excluded.respawn_seconds,
-                           fixed=excluded.fixed,
-                           fixed_days=excluded.fixed_days,
-                           fixed_time=excluded.fixed_time,
                            spawns_on_open=excluded.spawns_on_open,
                            open_delay_seconds=excluded.open_delay_seconds""",
                     (
                         message.guild.id, self.bn, boss_name,
                         json.dumps(aliases, ensure_ascii=False),
-                        respawn_sec, int(fixed),
-                        json.dumps(fixed_days, ensure_ascii=False) if fixed_days else None,
-                        fixed_time, int(spawns_on_open), open_delay,
+                        respawn_sec, int(spawns_on_open), open_delay,
                     ),
                 )
                 await db.commit()
@@ -343,10 +336,9 @@ class Boss(commands.Cog):
         embed.add_field(name="이름", value=boss_name)
         if aliases:
             embed.add_field(name="별명", value=", ".join(aliases))
-        if fixed:
-            embed.add_field(name="타입", value=f"고정 {fixed_time}")
-        elif respawn_sec:
-            embed.add_field(name="리스폰", value=fmt_seconds(respawn_sec))
+        embed.add_field(name="리스폰", value=fmt_seconds(respawn_sec))
+        if spawns_on_open:
+            embed.add_field(name="서버기동 스폰", value=f"딜레이 {fmt_seconds(open_delay)}" if open_delay else "즉시")
         await message.channel.send(embed=embed)
 
     # ── .보스삭제 ─────────────────────────────────────────

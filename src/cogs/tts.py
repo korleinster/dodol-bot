@@ -1,6 +1,7 @@
 """TTS — edge-tts SunHiNeural"""
 import asyncio
-import io
+import os
+import sys
 import tempfile
 
 import discord
@@ -10,6 +11,8 @@ import edge_tts
 
 VOICE = "ko-KR-SunHiNeural"
 PREFIX = "."
+
+RESTART_KW = {"정신차려", "재시작"}
 
 
 class TTS(commands.Cog):
@@ -57,8 +60,8 @@ class TTS(commands.Cog):
             text = cmd[2:].strip()
             if text:
                 await self.speak(message.guild, text)
-        elif cmd.lower() == "정신차려":
-            await self._rejoin(message.guild)
+        elif cmd.lower() in RESTART_KW:
+            await self._restart(message)
 
     # ── speak (외부에서 호출 가능) ────────────────────────
 
@@ -71,7 +74,6 @@ class TTS(commands.Cog):
         if not isinstance(vc_channel, discord.VoiceChannel):
             return
 
-        # 현재 음성 연결 확인
         voice_client: discord.VoiceClient | None = guild.voice_client  # type: ignore
         try:
             if voice_client and voice_client.is_connected():
@@ -82,14 +84,12 @@ class TTS(commands.Cog):
         except Exception:
             return
 
-        # TTS 생성
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp_path = f.name
 
         communicate = edge_tts.Communicate(text, VOICE)
         await communicate.save(tmp_path)
 
-        # 재생
         def after(_):
             asyncio.run_coroutine_threadsafe(self._maybe_disconnect(voice_client), self.bot.loop)
 
@@ -103,9 +103,15 @@ class TTS(commands.Cog):
         if not vc.is_playing():
             await vc.disconnect()
 
-    async def _rejoin(self, guild: discord.Guild) -> None:
-        if guild.voice_client:
-            await guild.voice_client.disconnect(force=True)
+    async def _restart(self, message: discord.Message) -> None:
+        if message.guild and message.guild.voice_client:
+            try:
+                await message.guild.voice_client.disconnect(force=True)
+            except Exception:
+                pass
+        await message.channel.send("🔄 봇을 재시작합니다...")
+        await asyncio.sleep(1)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 async def setup(bot: commands.Bot):
