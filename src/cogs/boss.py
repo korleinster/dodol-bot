@@ -658,10 +658,6 @@ class Boss(commands.Cog):
             return
         h, m = hm
         open_time = now().replace(hour=h, minute=m, second=0, microsecond=0)
-        if abs((open_time - now()).total_seconds()) > 8 * 3600:
-            await message.channel.send("❌ 현재 시각 ±8시간 범위의 시각만 입력 가능합니다.")
-            return
-
         async with get_db() as db:
             async with db.execute(
                 "SELECT * FROM bosses WHERE guild_id=? AND bot_number=? AND fixed=0",
