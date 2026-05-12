@@ -100,39 +100,49 @@ class Minigame(commands.Cog):
             n = 4
         n = max(2, min(n, 8))
 
-        HORSE_NAMES = ["🐴 1번마", "🐎 2번마", "🦄 3번마", "🏇 4번마",
-                       "🐴 5번마", "🐎 6번마", "🦄 7번마", "🏇 8번마"]
-        names = HORSE_NAMES[:n]
-        TRACK = 12
-        pos = [0] * n
+        LABELS = ["1번", "2번", "3번", "4번", "5번", "6번", "7번", "8번"]
+        labels = LABELS[:n]
+        TRACK  = 28
+        pos    = [0] * n
+        podium: list[int] = []   # 완주 순서
+        MEDALS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
 
-        def render(finished_idx: int | None = None) -> str:
-            lines = []
-            for i, nm in enumerate(names):
-                bar = "─" * pos[i] + "🏁" if pos[i] >= TRACK else "─" * pos[i] + "▶" + " " * (TRACK - pos[i])
-                lines.append(f"`{nm}` {bar}")
-            if finished_idx is not None:
-                lines.append(f"\n🏆 **{names[finished_idx]}** 우승!")
+        def render(done: bool = False) -> str:
+            lines = ["🏇 **경마 진행 중!**" if not done else "🏁 **경마 종료!**", ""]
+            for i, lbl in enumerate(labels):
+                p = min(pos[i], TRACK)
+                if p >= TRACK:
+                    bar = "─" * TRACK + "🐎"
+                else:
+                    bar = "─" * p + "🐎" + "╌" * (TRACK - p)
+                lines.append(f"`{lbl}`  {bar}  🏁")
+            if done and podium:
+                lines.append("")
+                for rank, idx in enumerate(podium):
+                    lines.append(f"{MEDALS[rank]} **{labels[idx]}**")
             return "\n".join(lines)
 
-        msg = await message.channel.send("🏁 경마 시작!\n" + render())
+        msg = await message.channel.send(render())
 
-        winner_idx = None
-        for _ in range(30):
-            await asyncio.sleep(0.6)
+        for _ in range(60):
+            await asyncio.sleep(0.5)
             for i in range(n):
                 if pos[i] < TRACK:
-                    pos[i] += random.randint(0, 2)
-            # 먼저 결승선 통과한 말 찾기
-            finished = [i for i in range(n) if pos[i] >= TRACK]
-            if finished:
-                winner_idx = finished[0]
+                    # 가중치: 0칸(15%), 1칸(40%), 2칸(30%), 3칸(15%)
+                    pos[i] += random.choices([0, 1, 2, 3], weights=[15, 40, 30, 15])[0]
+                    if pos[i] >= TRACK and i not in podium:
+                        podium.append(i)
+            await msg.edit(content=render())
+            if len(podium) == n:
                 break
 
-        if winner_idx is None:
-            winner_idx = pos.index(max(pos))
-
-        await msg.edit(content=render(winner_idx))
+        # 타임아웃 시 미완주 말 순위 처리
+        remaining = sorted(
+            [i for i in range(n) if i not in podium],
+            key=lambda i: -pos[i],
+        )
+        podium.extend(remaining)
+        await msg.edit(content=render(done=True))
 
     # ── 뽑기 ──────────────────────────────────────────────
 
