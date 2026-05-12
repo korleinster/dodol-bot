@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 
 import discord
 from discord.ext import commands, tasks
@@ -59,7 +61,7 @@ def fmt_remain(delta: timedelta) -> str:
 
 
 def now() -> datetime:
-    return datetime.now()
+    return datetime.now(KST).replace(tzinfo=None)
 
 
 def parse_cut_command(text: str) -> dict | None:
