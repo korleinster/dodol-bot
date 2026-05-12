@@ -693,22 +693,72 @@ class Boss(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def check_schedules(self):
-        threshold = (now() + timedelta(seconds=60)).isoformat()
-        async with get_db() as db:
-            async with db.execute(
-                "SELECT s.*, gc.text_channel_id FROM schedules s "
-                "JOIN guild_config gc ON s.guild_id=gc.guild_id AND s.bot_number=gc.bot_number "
-                "WHERE s.bot_number=? AND s.notified=0 AND s.scheduled_at <= ?",
-                (self.bn, threshold),
-            ) as cur:
-                rows = [dict(r) async for r in cur]
+        n = now()
+        base_q = (
+            "SELECT s.*, gc.text_channel_id FROM schedules s "
+            "JOIN guild_config gc ON s.guild_id=gc.guild_id AND s.bot_number=gc.bot_number "
+            "WHERE s.bot_number=? AND s.notified=0 AND s.scheduled_at <= ?"
+        )
 
-        for r in rows:
+        async def fetch(extra_where: str, threshold_sec: int):
+            t = (n + timedelta(seconds=threshold_sec)).isoformat()
+            async with get_db() as db:
+                async with db.execute(
+                    base_q + extra_where, (self.bn, t)
+                ) as cur:
+                    return [dict(r) async for r in cur]
+
+        rows_5min  = await fetch(" AND s.warned_5min=0",  330)
+        rows_1min  = await fetch(" AND s.warned_1min=0",   90)
+        rows_final = await fetch("",                        60)
+
+        # ── 5분 전 경고 ───────────────────────────────────
+        for r in rows_5min:
+            if r["id"] in {x["id"] for x in rows_final}:
+                continue  # 최종 알림이 이미 처리할 예정
             channel = self.bot.get_channel(r["text_channel_id"])
             if not channel:
                 continue
             at = datetime.fromisoformat(r["scheduled_at"])
-            remain = fmt_remain(at - now())
+            miss_str = f" (미입력×{r['miss_count']})" if r["miss_count"] else ""
+            embed = discord.Embed(
+                title="⏰ 5분 후 출현",
+                description=f"**{r['content']}**{miss_str}  — {fmt_remain(at - n)}",
+                color=0xFEE75C,
+            )
+            await channel.send(embed=embed)
+            async with get_db() as db:
+                await db.execute("UPDATE schedules SET warned_5min=1 WHERE id=?", (r["id"],))
+                await db.commit()
+
+        # ── 1분 전 경고 ───────────────────────────────────
+        for r in rows_1min:
+            if r["id"] in {x["id"] for x in rows_final}:
+                continue
+            channel = self.bot.get_channel(r["text_channel_id"])
+            if not channel:
+                continue
+            at = datetime.fromisoformat(r["scheduled_at"])
+            miss_str = f" (미입력×{r['miss_count']})" if r["miss_count"] else ""
+            embed = discord.Embed(
+                title="⚠️ 1분 후 출현",
+                description=f"**{r['content']}**{miss_str}  — {fmt_remain(at - n)}",
+                color=0xFF8C00,
+            )
+            await channel.send(embed=embed)
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE schedules SET warned_5min=1, warned_1min=1 WHERE id=?", (r["id"],)
+                )
+                await db.commit()
+
+        # ── 최종 알림 ─────────────────────────────────────
+        for r in rows_final:
+            channel = self.bot.get_channel(r["text_channel_id"])
+            if not channel:
+                continue
+            at = datetime.fromisoformat(r["scheduled_at"])
+            remain = fmt_remain(at - n)
             miss_str = f"(미입력×{r['miss_count']}) " if r["miss_count"] else ""
             embed = discord.Embed(
                 title="⚔️ 보스 출현 임박!" if r["boss_name"] else "⏰ 예약 알림",
@@ -717,7 +767,6 @@ class Boss(commands.Cog):
             )
             await channel.send(embed=embed)
 
-            # TTS 알림
             tts_cog = self.bot.get_cog("TTS")
             if tts_cog:
                 await tts_cog.speak(
@@ -727,11 +776,11 @@ class Boss(commands.Cog):
 
             async with get_db() as db:
                 await db.execute(
-                    "UPDATE schedules SET notified=1 WHERE id=?", (r["id"],)
+                    "UPDATE schedules SET warned_5min=1, warned_1min=1, notified=1 WHERE id=?",
+                    (r["id"],),
                 )
                 await db.commit()
 
-            # 고정 보스 재예약
             if r["is_fixed"]:
                 boss = await self._find_boss(r["guild_id"], r["content"])
                 if boss and boss.get("respawn_seconds"):

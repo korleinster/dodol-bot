@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS schedules (
     scheduled_at TEXT    NOT NULL,
     is_fixed     INTEGER NOT NULL DEFAULT 0,
     miss_count   INTEGER NOT NULL DEFAULT 0,
+    warned_5min  INTEGER NOT NULL DEFAULT 0,
+    warned_1min  INTEGER NOT NULL DEFAULT 0,
     notified     INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
@@ -112,11 +114,16 @@ async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(_CREATE_SQL)
-        # 기존 DB 마이그레이션: is_default 컬럼 추가
-        try:
-            await db.execute("ALTER TABLE bosses ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0")
-        except Exception:
-            pass  # 이미 존재
+        # 기존 DB 마이그레이션
+        for sql in [
+            "ALTER TABLE bosses ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE schedules ADD COLUMN warned_5min INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE schedules ADD COLUMN warned_1min INTEGER NOT NULL DEFAULT 0",
+        ]:
+            try:
+                await db.execute(sql)
+            except Exception:
+                pass  # 이미 존재
         await db.commit()
 
 
