@@ -20,13 +20,19 @@ def is_chosung_only(text: str) -> bool:
 
 
 def boss_matches(boss_name: str, query: str) -> bool:
-    """보스 이름이 쿼리와 매칭되는지 확인 (부분일치 + 초성검색)"""
+    """보스 이름이 쿼리와 매칭되는지 확인 (부분일치 + 공백무시 + 초성검색)"""
     bn = boss_name.lower()
     q  = query.lower()
 
     if bn == q:
         return True
     if q in bn:
+        return True
+
+    # 공백 무시 비교 ("블랙릴리" ↔ "블랙 릴리" 양방향 매칭)
+    bn_ns = bn.replace(' ', '')
+    q_ns  = q.replace(' ', '')
+    if q_ns and (bn_ns == q_ns or q_ns in bn_ns):
         return True
 
     boss_cs = get_chosung(boss_name)

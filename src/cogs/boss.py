@@ -63,6 +63,25 @@ def now() -> datetime:
     return datetime.now(KST).replace(tzinfo=None)
 
 
+def next_fixed_occurrence(days_str: str, times_str: str) -> datetime | None:
+    """요일+시각 기반으로 다음 등장 시각 계산.
+    days_str : "2" 또는 "0,1,2,3,4,5,6" (월=0, 일=6)
+    times_str: "22:30" 또는 "12:00,20:00"
+    """
+    n = now()
+    days  = [int(d) for d in days_str.split(",")]
+    times = [(int(t.split(":")[0]), int(t.split(":")[1])) for t in times_str.split(",")]
+    candidates = []
+    for offset in range(8):          # 오늘 포함 최대 8일 탐색
+        dt = n + timedelta(days=offset)
+        if dt.weekday() in days:
+            for h, m in times:
+                candidate = dt.replace(hour=h, minute=m, second=0, microsecond=0)
+                if candidate > n:
+                    candidates.append(candidate)
+    return min(candidates) if candidates else None
+
+
 def parse_cut_command(text: str) -> dict | None:
     """
     지원 형식 (PREFIX 제거 후):
@@ -284,8 +303,8 @@ class Boss(commands.Cog):
 
         async with get_db() as db:
             async with db.execute(
-                "SELECT name, respawn_seconds, spawns_on_open, open_delay_seconds "
-                "FROM bosses WHERE guild_id=? AND bot_number=? ORDER BY respawn_seconds, name",
+                "SELECT name, respawn_seconds, spawns_on_open, open_delay_seconds, fixed, fixed_time "
+                "FROM bosses WHERE guild_id=? AND bot_number=? ORDER BY fixed, respawn_seconds, name",
                 (message.guild.id, self.bn),
             ) as cur:
                 rows = [dict(r) async for r in cur]
@@ -296,17 +315,27 @@ class Boss(commands.Cog):
 
         groups: dict = defaultdict(list)
         for r in rows:
-            sec = r["respawn_seconds"] or 0
             name = r["name"]
-            if r["spawns_on_open"]:
-                delay = r["open_delay_seconds"] or 0
-                name += f" 🔄{'즉시' if delay == 0 else '+' + fmt_seconds(delay)}"
-            groups[sec].append(name)
+            if r["fixed"]:
+                key = "고정"
+                name += f"  ({r['fixed_time']})"
+            else:
+                sec = r["respawn_seconds"] or 0
+                key = fmt_seconds(sec)
+                if r["spawns_on_open"]:
+                    delay = r["open_delay_seconds"] or 0
+                    name += f" 🔄{'즉시' if delay == 0 else '+' + fmt_seconds(delay)}"
+            groups[key].append(name)
+
+        def _sort_key(k: str):
+            if k == "고정":
+                return float("inf")
+            h, m = map(int, k.split(":"))
+            return h * 60 + m
 
         lines = []
-        for sec in sorted(groups):
-            names = groups[sec]
-            lines.append(f"`{fmt_seconds(sec)}`  {',  '.join(names)}")
+        for key in sorted(groups, key=_sort_key):
+            lines.append(f"`{key}`  {',  '.join(groups[key])}")
 
         embed = discord.Embed(
             title="⚔️ 등록된 보스 목록",
@@ -557,7 +586,13 @@ class Boss(commands.Cog):
                     if await cur.fetchone():
                         continue
 
-                delay_sec = boss.get("respawn_seconds") or 0
+                if boss["spawns_on_open"]:
+                    # 지연 있음: 오픈시간 + 지연시간 = 첫 등장
+                    delay_sec = boss["open_delay_seconds"] or 0
+                else:
+                    # 지연 없음: 오픈시각에 이미 등장 → 다음 = 오픈 + 리스폰
+                    delay_sec = boss["respawn_seconds"] or 0
+
                 spawn_at = open_time + timedelta(seconds=delay_sec)
                 await db.execute(
                     """INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
@@ -716,15 +751,53 @@ class Boss(commands.Cog):
 
             if r["is_fixed"]:
                 boss = await self._find_boss(r["guild_id"], r["content"])
-                if boss and boss.get("respawn_seconds"):
-                    next_at = at + timedelta(seconds=boss["respawn_seconds"])
-                    async with get_db() as db:
-                        await db.execute(
-                            "INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, is_fixed) "
-                            "VALUES (?,?,?,?,?,1)",
-                            (r["guild_id"], self.bn, r["boss_name"], r["content"], next_at.isoformat()),
-                        )
-                        await db.commit()
+                if boss:
+                    if boss.get("fixed") and boss.get("fixed_days") and boss.get("fixed_time"):
+                        next_at = next_fixed_occurrence(boss["fixed_days"], boss["fixed_time"])
+                    elif boss.get("respawn_seconds"):
+                        next_at = at + timedelta(seconds=boss["respawn_seconds"])
+                    else:
+                        next_at = None
+                    if next_at:
+                        async with get_db() as db:
+                            await db.execute(
+                                "INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, is_fixed) "
+                                "VALUES (?,?,?,?,?,1)",
+                                (r["guild_id"], self.bn, r["boss_name"], r["content"], next_at.isoformat()),
+                            )
+                            await db.commit()
+
+        # ── 고정 일정 보스 자동 예약 생성 ────────────────
+        async with get_db() as db:
+            async with db.execute(
+                """SELECT b.guild_id, b.name, b.fixed_days, b.fixed_time
+                   FROM bosses b
+                   JOIN guild_config gc ON b.guild_id=gc.guild_id AND b.bot_number=gc.bot_number
+                   WHERE b.bot_number=? AND b.fixed=1
+                     AND b.fixed_days IS NOT NULL AND b.fixed_time IS NOT NULL""",
+                (self.bn,),
+            ) as cur:
+                fixed_bosses = [dict(r) async for r in cur]
+
+        for fb in fixed_bosses:
+            async with get_db() as db:
+                async with db.execute(
+                    "SELECT 1 FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
+                    (fb["guild_id"], self.bn, fb["name"]),
+                ) as cur:
+                    if await cur.fetchone():
+                        continue
+            next_at = next_fixed_occurrence(fb["fixed_days"], fb["fixed_time"])
+            if next_at is None:
+                continue
+            async with get_db() as db:
+                await db.execute(
+                    "INSERT OR IGNORE INTO schedules "
+                    "(guild_id, bot_number, boss_name, content, scheduled_at, is_fixed) "
+                    "VALUES (?,?,?,?,?,1)",
+                    (fb["guild_id"], self.bn, fb["name"], fb["name"], next_at.isoformat()),
+                )
+                await db.commit()
 
         # ── 자동 미입력 처리 ──────────────────────────────
         async with get_db() as db:
