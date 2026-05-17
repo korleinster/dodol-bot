@@ -299,12 +299,14 @@ class Boss(commands.Cog):
     # ── .보스 ─────────────────────────────────────────────
 
     async def _cmd_boss_list(self, message: discord.Message):
-        from collections import defaultdict
+        _DAY = {"0":"월","1":"화","2":"수","3":"목","4":"금","5":"토","6":"일"}
 
         async with get_db() as db:
             async with db.execute(
-                "SELECT name, respawn_seconds, spawns_on_open, open_delay_seconds, fixed, fixed_time "
-                "FROM bosses WHERE guild_id=? AND bot_number=? ORDER BY fixed, respawn_seconds, name",
+                "SELECT name, respawn_seconds, spawns_on_open, open_delay_seconds, "
+                "fixed, fixed_days, fixed_time "
+                "FROM bosses WHERE guild_id=? AND bot_number=? "
+                "ORDER BY fixed ASC, COALESCE(respawn_seconds,0) DESC, name ASC",
                 (message.guild.id, self.bn),
             ) as cur:
                 rows = [dict(r) async for r in cur]
@@ -313,29 +315,20 @@ class Boss(commands.Cog):
             await message.channel.send("등록된 보스가 없습니다.")
             return
 
-        groups: dict = defaultdict(list)
+        lines = []
         for r in rows:
-            name = r["name"]
             if r["fixed"]:
-                key = "고정"
-                name += f"  ({r['fixed_time']})"
+                days_str = r["fixed_days"] or ""
+                day_label = "매일" if days_str == "0,1,2,3,4,5,6" \
+                    else "/".join(_DAY.get(d, d) for d in days_str.split(","))
+                lines.append(f"고정  {r['name']}  ({day_label} {r['fixed_time']})")
             else:
                 sec = r["respawn_seconds"] or 0
-                key = fmt_seconds(sec)
+                suffix = ""
                 if r["spawns_on_open"]:
                     delay = r["open_delay_seconds"] or 0
-                    name += f" 🔄{'즉시' if delay == 0 else '+' + fmt_seconds(delay)}"
-            groups[key].append(name)
-
-        def _sort_key(k: str):
-            if k == "고정":
-                return float("inf")
-            h, m = map(int, k.split(":"))
-            return h * 60 + m
-
-        lines = []
-        for key in sorted(groups, key=_sort_key):
-            lines.append(f"`{key}`  {',  '.join(groups[key])}")
+                    suffix = f"  🔄{'즉시' if delay == 0 else '+' + fmt_seconds(delay)}"
+                lines.append(f"{fmt_seconds(sec)}  {r['name']}{suffix}")
 
         embed = discord.Embed(
             title="⚔️ 등록된 보스 목록",
