@@ -1,6 +1,8 @@
-"""도움말 — .메뉴 / .도움말 / .?"""
+"""도움말 — 메뉴 / 도움말 / ?"""
 import discord
 from discord.ext import commands
+
+from src.db import get_db
 
 HELP_TRIGGERS = {"메뉴", "도움말", "?"}
 
@@ -10,6 +12,15 @@ class Help(commands.Cog):
         self.bot = bot
         self.bn  = bot.bot_number
 
+    async def get_text_channel(self, guild_id: int) -> int | None:
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT text_channel_id FROM guild_config WHERE guild_id=? AND bot_number=?",
+                (guild_id, self.bn),
+            ) as cur:
+                row = await cur.fetchone()
+                return row[0] if row else None
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if (message.author.bot and message.author.id != getattr(self.bot, "tester_id", 0)) or not message.guild:
@@ -17,6 +28,11 @@ class Help(commands.Cog):
         content = message.content.strip()
         if not content:
             return
+
+        assigned = await self.get_text_channel(message.guild.id)
+        if assigned and message.channel.id != assigned:
+            return
+
         cmd = content.strip().lower()
         if cmd in HELP_TRIGGERS:
             await self._cmd_help(message)
