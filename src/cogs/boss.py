@@ -303,13 +303,16 @@ class Boss(commands.Cog):
                 name += f" 🔄{'즉시' if delay == 0 else '+' + fmt_seconds(delay)}"
             groups[sec].append(name)
 
-        embed = discord.Embed(title="⚔️ 등록된 보스 목록", color=0x5865F2)
+        lines = []
         for sec in sorted(groups):
-            embed.add_field(
-                name=f"⏱ {fmt_seconds(sec)}",
-                value="\n".join(groups[sec]),
-                inline=True,
-            )
+            names = groups[sec]
+            lines.append(f"`{fmt_seconds(sec)}`  {',  '.join(names)}")
+
+        embed = discord.Embed(
+            title="⚔️ 등록된 보스 목록",
+            description="\n".join(lines),
+            color=0x5865F2,
+        )
         embed.set_footer(text=f"총 {len(rows)}개  |  🔄 서버 재시작 시 스폰")
         await message.channel.send(embed=embed)
 
