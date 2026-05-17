@@ -306,7 +306,7 @@ class Boss(commands.Cog):
                 "SELECT name, respawn_seconds, spawns_on_open, open_delay_seconds, "
                 "fixed, fixed_days, fixed_time "
                 "FROM bosses WHERE guild_id=? AND bot_number=? "
-                "ORDER BY fixed ASC, COALESCE(respawn_seconds,0) DESC, name ASC",
+                "ORDER BY fixed DESC, COALESCE(respawn_seconds,0) ASC, name ASC",
                 (message.guild.id, self.bn),
             ) as cur:
                 rows = [dict(r) async for r in cur]
