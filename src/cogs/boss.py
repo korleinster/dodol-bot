@@ -280,10 +280,12 @@ class Boss(commands.Cog):
     # ── .보스 ─────────────────────────────────────────────
 
     async def _cmd_boss_list(self, message: discord.Message):
+        from collections import defaultdict
+
         async with get_db() as db:
             async with db.execute(
                 "SELECT name, respawn_seconds, spawns_on_open, open_delay_seconds "
-                "FROM bosses WHERE guild_id=? AND bot_number=? ORDER BY respawn_seconds DESC, name",
+                "FROM bosses WHERE guild_id=? AND bot_number=? ORDER BY respawn_seconds, name",
                 (message.guild.id, self.bn),
             ) as cur:
                 rows = [dict(r) async for r in cur]
@@ -292,20 +294,22 @@ class Boss(commands.Cog):
             await message.channel.send("등록된 보스가 없습니다.")
             return
 
-        lines = []
+        groups: dict = defaultdict(list)
         for r in rows:
             sec = r["respawn_seconds"] or 0
-            line = f"`{fmt_seconds(sec)}` {r['name']}"
+            name = r["name"]
             if r["spawns_on_open"]:
                 delay = r["open_delay_seconds"] or 0
-                line += f"  🔄{'즉시' if delay == 0 else '+' + fmt_seconds(delay)}"
-            lines.append(line)
+                name += f" 🔄{'즉시' if delay == 0 else '+' + fmt_seconds(delay)}"
+            groups[sec].append(name)
 
-        embed = discord.Embed(
-            title="⚔️ 등록된 보스 목록",
-            description="\n".join(lines),
-            color=0x5865F2,
-        )
+        embed = discord.Embed(title="⚔️ 등록된 보스 목록", color=0x5865F2)
+        for sec in sorted(groups):
+            embed.add_field(
+                name=f"⏱ {fmt_seconds(sec)}",
+                value="\n".join(groups[sec]),
+                inline=True,
+            )
         embed.set_footer(text=f"총 {len(rows)}개  |  🔄 서버 재시작 시 스폰")
         await message.channel.send(embed=embed)
 
