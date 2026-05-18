@@ -55,7 +55,7 @@ class TTS(commands.Cog):
 
         cmd = content
 
-        if cmd.lower().startswith("v "):
+        if cmd.lower().startswith("v ") or cmd.startswith("ㅍ "):
             text = cmd[2:].strip()
             if text:
                 await self.speak(message.guild, text)

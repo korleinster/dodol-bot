@@ -255,12 +255,27 @@ class Boss(commands.Cog):
             await self._cmd_botam(message, include_fixed="+" in head)
             return
 
-        # z/Z (다음 예약 1건) / z+/Z+ (전체 보탐)
+        # z/Z (가까운 5건 보탐) / z+/Z+ (전체 보탐)
         if head in ("z", "Z", "z+", "Z+") and len(parts) == 1:
             if "+" in head:
                 await self._cmd_botam(message, include_fixed=True)
             else:
-                await self._cmd_next(message, False, head == "Z")
+                await self._cmd_botam(message, include_fixed=False)
+                if head == "Z":
+                    async with get_db() as db:
+                        async with db.execute(
+                            "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? "
+                            "AND notified=0 AND is_fixed=0 ORDER BY scheduled_at LIMIT 1",
+                            (message.guild.id, self.bn),
+                        ) as cur:
+                            nxt = await cur.fetchone()
+                    if nxt:
+                        nxt = dict(nxt)
+                        at = datetime.fromisoformat(nxt["scheduled_at"])
+                        remain = fmt_remain(at - now())
+                        tts_cog = self.bot.get_cog("TTS")
+                        if tts_cog:
+                            await tts_cog.speak(message.guild, f"{nxt['content']} {remain}")
             return
 
         # 서버오픈: "05:00 서버오픈" / "서버오픈 05:00" / "오픈 05:00"
@@ -290,11 +305,6 @@ class Boss(commands.Cog):
                 await self._cmd_schedule_custom(message, hm, m.group(2).strip())
                 return
 
-        # 내용 삭제
-        if cmd.endswith(" 삭제"):
-            keyword = cmd[:-3].strip()
-            await self._cmd_delete_schedule(message, keyword)
-            return
 
     # ── .보스 ─────────────────────────────────────────────
 
@@ -501,7 +511,10 @@ class Boss(commands.Cog):
         if not boss:
             return f"❌ **{query}** 에 해당하는 보스를 찾을 수 없습니다."
 
-        if boss["respawn_seconds"] is None and not boss["fixed"]:
+        if boss.get("fixed"):
+            return f"❌ **{boss['name']}** 은 고정 일정 보스로 컷/멍 처리가 불필요합니다."
+
+        if boss["respawn_seconds"] is None:
             return f"❌ **{boss['name']}** 은 리스폰이 설정되지 않았습니다."
 
         base_time = now()
@@ -612,17 +625,6 @@ class Boss(commands.Cog):
             await db.commit()
         await message.channel.send(f"📌 **{content}** → {at.strftime('%m/%d %H:%M')} 예약 완료.")
 
-    # ── 예약 삭제 ─────────────────────────────────────────
-
-    async def _cmd_delete_schedule(self, message: discord.Message, keyword: str):
-        async with get_db() as db:
-            cur = await db.execute(
-                "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND content LIKE ? AND is_fixed=0",
-                (message.guild.id, self.bn, f"%{keyword}%"),
-            )
-            await db.commit()
-        await message.channel.send(f"🗑️ **{keyword}** 포함 예약 {cur.rowcount}건 삭제.")
-
     # ── 헬퍼: 보스 검색 ───────────────────────────────────
 
     async def _find_boss(self, guild_id: int, query: str) -> dict | None:
@@ -725,7 +727,7 @@ class Boss(commands.Cog):
                 description=f"**{r['content']}** {miss_str}— {remain}",
                 color=0xED4245,
             )
-            view = BossActionView(self, r["guild_id"], r["boss_name"]) if r["boss_name"] else None
+            view = BossActionView(self, r["guild_id"], r["boss_name"]) if r["boss_name"] and not r["is_fixed"] else None
             await channel.send(embed=embed, view=view)
 
             tts_cog = self.bot.get_cog("TTS")
@@ -741,24 +743,6 @@ class Boss(commands.Cog):
                     (r["id"],),
                 )
                 await db.commit()
-
-            if r["is_fixed"]:
-                boss = await self._find_boss(r["guild_id"], r["content"])
-                if boss:
-                    if boss.get("fixed") and boss.get("fixed_days") and boss.get("fixed_time"):
-                        next_at = next_fixed_occurrence(boss["fixed_days"], boss["fixed_time"])
-                    elif boss.get("respawn_seconds"):
-                        next_at = at + timedelta(seconds=boss["respawn_seconds"])
-                    else:
-                        next_at = None
-                    if next_at:
-                        async with get_db() as db:
-                            await db.execute(
-                                "INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, is_fixed) "
-                                "VALUES (?,?,?,?,?,1)",
-                                (r["guild_id"], self.bn, r["boss_name"], r["content"], next_at.isoformat()),
-                            )
-                            await db.commit()
 
         # ── 고정 일정 보스 자동 예약 생성 ────────────────
         async with get_db() as db:
@@ -801,6 +785,7 @@ class Boss(commands.Cog):
                    JOIN bosses b ON s.guild_id=b.guild_id AND s.bot_number=b.bot_number AND s.boss_name=b.name
                    JOIN guild_config gc ON s.guild_id=gc.guild_id AND s.bot_number=gc.bot_number
                    WHERE s.bot_number=? AND s.notified=1 AND s.boss_name IS NOT NULL
+                     AND b.fixed=0
                    ORDER BY s.scheduled_at DESC""",
                 (self.bn,),
             ) as cur:

@@ -1,0 +1,12 @@
+app = "dodol-bot"
+primary_region = "nrt"
+
+[build]
+
+[env]
+  PYTHONUNBUFFERED = "1"
+  DB_PATH = "/app/data/bot.db"
+
+[[mounts]]
+  source = "dodolbot_data"
+  destination = "/app/data"
