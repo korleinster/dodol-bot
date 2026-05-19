@@ -767,6 +767,10 @@ class Boss(commands.Cog):
             next_at = next_fixed_occurrence(fb["fixed_days"], fb["fixed_time"])
             if next_at is None:
                 continue
+            # 현재 정각 알림 처리 중인 시각(60초 이내)은 재예약 대상에서 제외
+            # rows_final이 notified=1 세팅 직후 같은 시각으로 새 예약이 생기는 버그 방지
+            if next_at <= n + timedelta(seconds=60):
+                continue
             async with get_db() as db:
                 await db.execute(
                     "INSERT OR IGNORE INTO schedules "
