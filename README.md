@@ -435,6 +435,18 @@ DiscordBot/
 
 ---
 
+## 상세 명세
+
+| 문서 | 내용 |
+|---|---|
+| [docs/db-schema.md](docs/db-schema.md) | DB 테이블 구조 및 컬럼 설명 |
+| [docs/boss-data.md](docs/boss-data.md) | 기본 보스 전체 목록 및 데이터 기준 |
+| [docs/notification-logic.md](docs/notification-logic.md) | 알림 타이밍, 자동 재예약, 자동 미입력 흐름 |
+| [docs/error-cases.md](docs/error-cases.md) | 예외 상황별 봇 동작 |
+| [docs/test-spec.md](docs/test-spec.md) | E2E 테스트 17개 항목 및 검증 기준 |
+
+---
+
 ## 저작권
 
 Copyright (c) 2025 [korleinster](https://github.com/korleinster) — All Rights Reserved.
