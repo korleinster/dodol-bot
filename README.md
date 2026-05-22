@@ -3,6 +3,7 @@
 리니지2M 보스 컷/멍/예약 관리, TTS 알림, 거래소 시세 검색, 날씨, 미니게임 기능을 제공하는 디스코드 봇입니다.
 
 [![License](https://img.shields.io/badge/license-All%20Rights%20Reserved-red.svg)](LICENSE)
+[![Sponsor](https://img.shields.io/badge/Sponsor-EA4AAA?style=flat&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/korleinster)
 
 ---
 
