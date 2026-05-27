@@ -74,7 +74,7 @@ class TTS(commands.Cog):
                 pass
 
         try:
-            voice_client = await vc_channel.connect(timeout=60.0)
+            voice_client = await vc_channel.connect(timeout=60.0, reconnect=True)
             print(f"[TTS] 음성채널 연결: {vc_channel.name}")
             return voice_client
         except Exception as e:
@@ -90,7 +90,7 @@ class TTS(commands.Cog):
         if not self.voice_keepalive.is_running():
             self.voice_keepalive.start()
 
-    @tasks.loop(seconds=30)
+    @tasks.loop(seconds=60)
     async def voice_keepalive(self):
         """30초마다 연결 상태 확인 및 재연결"""
         for guild in self.bot.guilds:
