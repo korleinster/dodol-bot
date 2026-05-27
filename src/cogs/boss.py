@@ -600,7 +600,8 @@ class Boss(commands.Cog):
             miss_count = 0
             label      = "컷"
         elif action == "spawn":
-            spawn_at   = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
+            # 젠: 입력한 시각이 바로 출현 예정 시각 → 그 시각에 알림 발송
+            spawn_at   = base_time
             miss_count = 0
             label      = "젠"
         else:
@@ -635,9 +636,13 @@ class Boss(commands.Cog):
             title=f"{emoji} {boss['name']} {label} 처리",
             color=color,
         )
-        embed.add_field(name="기준 시각", value=base_time.strftime("%H:%M"))
-        embed.add_field(name="다음 리스폰", value=spawn_at.strftime("%m/%d %H:%M"))
-        embed.add_field(name="남은 시간", value=fmt_remain(spawn_at - now()))
+        if action == "spawn":
+            embed.add_field(name="출현 예정", value=spawn_at.strftime("%m/%d %H:%M"))
+            embed.add_field(name="남은 시간", value=fmt_remain(spawn_at - now()))
+        else:
+            embed.add_field(name="기준 시각", value=base_time.strftime("%H:%M"))
+            embed.add_field(name="다음 리스폰", value=spawn_at.strftime("%m/%d %H:%M"))
+            embed.add_field(name="남은 시간", value=fmt_remain(spawn_at - now()))
         return embed
 
     async def _cmd_cut_miss(self, message: discord.Message, parsed: dict):
