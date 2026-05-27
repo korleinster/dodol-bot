@@ -1,17 +1,22 @@
-"""TTS — edge-tts SunHiNeural"""
+"""TTS — gTTS (Google TTS)"""
 import asyncio
 import os
 import sys
 import tempfile
+from functools import partial
 
 import discord
 from discord.ext import commands
 
-import edge_tts
-
-VOICE = "ko-KR-SunHiNeural"
+from gtts import gTTS
 
 RESTART_KW = {"정신차려", "재시작"}
+
+
+def _save_tts(text: str, path: str) -> None:
+    """동기 함수 — executor에서 실행"""
+    tts = gTTS(text=text, lang="ko")
+    tts.save(path)
 
 
 class TTS(commands.Cog):
@@ -95,8 +100,8 @@ class TTS(commands.Cog):
             tmp_path = f.name
 
         try:
-            communicate = edge_tts.Communicate(text, VOICE)
-            await communicate.save(tmp_path)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, partial(_save_tts, text, tmp_path))
             print(f"[TTS] TTS 파일 생성 완료: {tmp_path}")
         except Exception as e:
             print(f"[TTS] TTS 파일 생성 실패: {type(e).__name__}: {e}")
