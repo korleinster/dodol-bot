@@ -13,8 +13,9 @@ from discord.ext import commands, tasks
 from src.db import get_db
 from src.korean import boss_matches, normalize_time
 
-CUT_KW  = {"컷", "ㅋ", "cut"}
-MISS_KW = {"멍", "ㅁ"}
+CUT_KW   = {"컷", "ㅋ", "cut"}
+MISS_KW  = {"멍", "ㅁ"}
+SPAWN_KW = {"젠", "스폰", "spawn", "ㅈ"}
 
 
 # ── 시간 파싱 헬퍼 ────────────────────────────────────────────────────────────
@@ -89,9 +90,12 @@ def parse_cut_command(text: str) -> dict | None:
       체르 컷 0530 / 컷 체르 0530 / 20:45 체르 컷
       ㅊㄹ ㅋ / ㅋ ㅊㄹ / ㅊㄹㅂㅌ ㅋ
       체르 멍 / 멍 체르
-    Returns {'action': 'cut'|'miss', 'query': str, 'time_hm': (h,m)|None}
+      체르 젠 / 젠 체르 / 0000 체르 젠 / 0000 체르 스폰
+    Returns {'action': 'cut'|'miss'|'spawn', 'query': str, 'time_hm': (h,m)|None}
     """
     text = text.strip()
+
+    ALL_KW = CUT_KW | MISS_KW | SPAWN_KW
 
     # 앞 시각 '20:45 ...' 또는 '2045 ...'
     time_hm = None
@@ -112,29 +116,34 @@ def parse_cut_command(text: str) -> dict | None:
     if not parts:
         return None
 
+    def _action(kw: str) -> str:
+        if kw in CUT_KW:   return "cut"
+        if kw in MISS_KW:  return "miss"
+        return "spawn"
+
     action = None
     query = None
 
-    kw_last  = parts[-1] in CUT_KW or parts[-1] in MISS_KW
-    kw_first = parts[0]  in CUT_KW or parts[0]  in MISS_KW
+    kw_last  = parts[-1] in ALL_KW
+    kw_first = parts[0]  in ALL_KW
 
     if len(parts) >= 2 and kw_last:
-        action = "cut" if parts[-1] in CUT_KW else "miss"
+        action = _action(parts[-1])
         query  = " ".join(parts[:-1])
     elif len(parts) >= 2 and kw_first:
-        action = "cut" if parts[0] in CUT_KW else "miss"
+        action = _action(parts[0])
         query  = " ".join(parts[1:])
     elif len(parts) == 1:
         # 공백 없는 경우: 체르투바컷, ㅊㄹㅌㅂㅋ, ㅋㅊㄹㅌㅂ
         t = parts[0]
-        for kw in sorted(CUT_KW | MISS_KW, key=len, reverse=True):
+        for kw in sorted(ALL_KW, key=len, reverse=True):
             if t != kw and t.endswith(kw):
-                action = "cut" if kw in CUT_KW else "miss"
+                action = _action(kw)
                 query  = t[:-len(kw)]
                 return {"action": action, "query": query, "time_hm": time_hm}
-        for kw in ("ㅋ", "ㅁ"):
+        for kw in ("ㅋ", "ㅁ", "ㅈ"):
             if t != kw and t.startswith(kw):
-                action = "cut" if kw in CUT_KW else "miss"
+                action = _action(kw)
                 query  = t[len(kw):]
                 return {"action": action, "query": query, "time_hm": time_hm}
         return None
@@ -297,13 +306,39 @@ class Boss(commands.Cog):
             await self._cmd_cut_miss(message, parsed)
             return
 
-        # HH:MM 내용 — 임의 예약
+        # HH:MM 내용 — 보스 이름이면 젠 처리, 아니면 임의 예약
         m = re.match(r"^(\d{2}:?\d{2})\s+(.+)$", cmd)
         if m:
             hm = normalize_time(m.group(1))
             if hm:
-                await self._cmd_schedule_custom(message, hm, m.group(2).strip())
+                content = m.group(2).strip()
+                boss = await self._find_boss(message.guild.id, content)
+                if boss:
+                    # 보스 이름 → 젠 처리
+                    result = await self._do_cut_miss(message.guild.id, content, "spawn", hm)
+                    if isinstance(result, str):
+                        await message.channel.send(result)
+                    else:
+                        await message.channel.send(embed=result)
+                    return
+                # 보스 이름 유사 여부 확인 (매칭은 안 됐지만 보스처럼 보이는 경우 제외)
+                await self._cmd_schedule_custom(message, hm, content)
                 return
+
+        # 보스명 HH:MM — 보스 이름이면 젠 처리
+        m = re.match(r"^(.+?)\s+(\d{2}:?\d{2})$", cmd)
+        if m:
+            hm = normalize_time(m.group(2))
+            if hm:
+                content = m.group(1).strip()
+                boss = await self._find_boss(message.guild.id, content)
+                if boss:
+                    result = await self._do_cut_miss(message.guild.id, content, "spawn", hm)
+                    if isinstance(result, str):
+                        await message.channel.send(result)
+                    else:
+                        await message.channel.send(embed=result)
+                    return
 
 
     # ── .보스 ─────────────────────────────────────────────
@@ -528,6 +563,10 @@ class Boss(commands.Cog):
             spawn_at   = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
             miss_count = 0
             label      = "컷"
+        elif action == "spawn":
+            spawn_at   = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
+            miss_count = 0
+            label      = "젠"
         else:
             prev = await self._get_last_schedule(guild_id, boss["name"])
             if prev:
@@ -548,9 +587,11 @@ class Boss(commands.Cog):
             )
             await db.commit()
 
+        emoji = "✅" if action == "cut" else ("🌀" if action == "spawn" else "😶")
+        color = 0x57F287 if action == "cut" else (0x5865F2 if action == "spawn" else 0xFEE75C)
         embed = discord.Embed(
-            title=f"{'✅' if action == 'cut' else '😶'} {boss['name']} {label} 처리",
-            color=0x57F287 if action == "cut" else 0xFEE75C,
+            title=f"{emoji} {boss['name']} {label} 처리",
+            color=color,
         )
         embed.add_field(name="기준 시각", value=base_time.strftime("%H:%M"))
         embed.add_field(name="다음 리스폰", value=spawn_at.strftime("%m/%d %H:%M"))
@@ -613,6 +654,14 @@ class Boss(commands.Cog):
     # ── 임의 예약 ─────────────────────────────────────────
 
     async def _cmd_schedule_custom(self, message: discord.Message, hm: tuple, content: str):
+        # 보스 이름으로 임의 예약 반려
+        boss = await self._find_boss(message.guild.id, content)
+        if boss:
+            await message.channel.send(
+                f"⚠️ **{boss['name']}** 은 보스 이름입니다. 젠 기록은 `HH:MM {boss['name']} 젠` 을 사용하세요."
+            )
+            return
+
         h, m = hm
         at = now().replace(hour=h, minute=m, second=0, microsecond=0)
         if at < now():
