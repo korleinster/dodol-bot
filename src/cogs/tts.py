@@ -93,16 +93,26 @@ class TTS(commands.Cog):
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp_path = f.name
 
-        communicate = edge_tts.Communicate(text, VOICE)
-        await communicate.save(tmp_path)
+        try:
+            communicate = edge_tts.Communicate(text, VOICE)
+            await communicate.save(tmp_path)
+            print(f"[TTS] TTS 파일 생성 완료: {tmp_path}")
+        except Exception as e:
+            print(f"[TTS] TTS 파일 생성 실패: {type(e).__name__}: {e}")
+            return
 
-        def after(_):
+        def after(err):
+            if err:
+                print(f"[TTS] 재생 중 오류: {type(err).__name__}: {err}")
             asyncio.run_coroutine_threadsafe(self._maybe_disconnect(voice_client), self.bot.loop)
 
-        if voice_client.is_playing():
-            voice_client.stop()
-
-        voice_client.play(discord.FFmpegPCMAudio(tmp_path), after=after)
+        try:
+            if voice_client.is_playing():
+                voice_client.stop()
+            voice_client.play(discord.FFmpegPCMAudio(tmp_path), after=after)
+            print(f"[TTS] 재생 시작: {text[:30]}")
+        except Exception as e:
+            print(f"[TTS] 재생 시작 실패: {type(e).__name__}: {e}")
 
     async def _maybe_disconnect(self, vc: discord.VoiceClient) -> None:
         await asyncio.sleep(1)
