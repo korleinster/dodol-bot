@@ -342,16 +342,17 @@ class Boss(commands.Cog):
             hm = normalize_time(m.group(1))
             if hm:
                 content = m.group(2).strip()
-                boss = await self._find_boss(message.guild.id, content)
-                if boss:
-                    # 보스 이름 → 젠 처리
+                candidates = await self._find_bosses(message.guild.id, content)
+                if len(candidates) > 1:
+                    await self._ambiguous_reply(message.channel, candidates)
+                    return
+                if candidates:
                     result = await self._do_cut_miss(message.guild.id, content, "spawn", hm)
                     if isinstance(result, str):
                         await message.channel.send(result)
                     else:
                         await message.channel.send(embed=result)
                     return
-                # 보스 이름 유사 여부 확인 (매칭은 안 됐지만 보스처럼 보이는 경우 제외)
                 await self._cmd_schedule_custom(message, hm, content)
                 return
 
@@ -361,8 +362,11 @@ class Boss(commands.Cog):
             hm = normalize_time(m.group(2))
             if hm:
                 content = m.group(1).strip()
-                boss = await self._find_boss(message.guild.id, content)
-                if boss:
+                candidates = await self._find_bosses(message.guild.id, content)
+                if len(candidates) > 1:
+                    await self._ambiguous_reply(message.channel, candidates)
+                    return
+                if candidates:
                     result = await self._do_cut_miss(message.guild.id, content, "spawn", hm)
                     if isinstance(result, str):
                         await message.channel.send(result)
@@ -635,6 +639,10 @@ class Boss(commands.Cog):
         return embed
 
     async def _cmd_cut_miss(self, message: discord.Message, parsed: dict):
+        candidates = await self._find_bosses(message.guild.id, parsed["query"])
+        if len(candidates) > 1:
+            await self._ambiguous_reply(message.channel, candidates)
+            return
         result = await self._do_cut_miss(
             message.guild.id, parsed["query"], parsed["action"], parsed["time_hm"]
         )
@@ -787,19 +795,32 @@ class Boss(commands.Cog):
 
     # ── 헬퍼: 보스 검색 ───────────────────────────────────
 
-    async def _find_boss(self, guild_id: int, query: str) -> dict | None:
+    async def _find_bosses(self, guild_id: int, query: str) -> list[dict]:
+        """쿼리에 매칭되는 모든 보스 목록 반환"""
         async with get_db() as db:
             async with db.execute(
                 "SELECT * FROM bosses WHERE guild_id=? AND bot_number=?",
                 (guild_id, self.bn),
             ) as cur:
                 rows = [dict(r) async for r in cur]
+        return [
+            r for r in rows
+            if any(boss_matches(n, query) for n in [r["name"]] + json.loads(r.get("aliases") or "[]"))
+        ]
 
-        for r in rows:
-            names = [r["name"]] + json.loads(r.get("aliases") or "[]")
-            if any(boss_matches(n, query) for n in names):
-                return r
-        return None
+    async def _find_boss(self, guild_id: int, query: str) -> dict | None:
+        matches = await self._find_bosses(guild_id, query)
+        return matches[0] if matches else None
+
+    async def _ambiguous_reply(self, channel: discord.TextChannel, candidates: list[dict]) -> None:
+        """여러 보스 후보가 있을 때 안내 메시지 전송"""
+        names = "\n".join(f"· **{b['name']}**" for b in candidates)
+        embed = discord.Embed(
+            title="🤔 여러 보스가 매칭됩니다",
+            description=f"{names}\n\n정확한 이름으로 다시 입력해주세요.",
+            color=0xFEE75C,
+        )
+        await channel.send(embed=embed)
 
     async def _get_last_schedule(self, guild_id: int, boss_name: str) -> dict | None:
         async with get_db() as db:

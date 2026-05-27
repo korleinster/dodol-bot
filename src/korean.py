@@ -46,7 +46,7 @@ def boss_matches(boss_name: str, query: str) -> bool:
     # 초성 전용 쿼리: 보스 초성 앞부터만 매칭
     boss_cs = get_chosung(boss_name)
     if is_chosung_only(q):
-        return len(q) >= 2 and boss_cs.startswith(q)
+        return boss_cs.startswith(q)
 
     return False
 
