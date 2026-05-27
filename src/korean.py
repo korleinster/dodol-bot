@@ -21,7 +21,7 @@ def is_chosung_only(text: str) -> bool:
 
 
 def boss_matches(boss_name: str, query: str) -> bool:
-    """보스 이름이 쿼리와 매칭되는지 확인 (부분일치 + 공백무시 + 초성검색)"""
+    """보스 이름이 쿼리와 매칭되는지 확인 (부분일치 + 공백무시 + 초성검색 + 단어 첫글자)"""
     bn = boss_name.lower()
     q  = query.lower()
 
@@ -36,15 +36,17 @@ def boss_matches(boss_name: str, query: str) -> bool:
     if q_ns and (bn_ns == q_ns or q_ns in bn_ns):
         return True
 
+    # 단어 첫 글자 조합 매칭 ("오크" → "오염된 크루마")
+    words = boss_name.split()
+    if len(words) >= 2:
+        initials = ''.join(w[0].lower() for w in words if w)
+        if q_ns == initials:
+            return True
+
+    # 초성 전용 쿼리: 보스 초성 앞부터만 매칭
     boss_cs = get_chosung(boss_name)
     if is_chosung_only(q):
-        # 초성 입력은 보스 이름 앞부터만 매칭 (중간 포함 X)
         return len(q) >= 2 and boss_cs.startswith(q)
-
-    # 완전 글자 쿼리 → 추출된 초성이 보스 초성 앞부터 매칭되어야 함
-    query_cs = get_chosung(q)
-    if query_cs and boss_cs.startswith(query_cs) and not any(c in CHOSUNG_SET for c in q):
-        return True
 
     return False
 

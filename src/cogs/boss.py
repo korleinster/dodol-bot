@@ -605,6 +605,12 @@ class Boss(commands.Cog):
             miss_count = (prev["miss_count"] + 1) if prev else 1
             label      = "멍"
 
+        # 계산된 시각이 과거면 리스폰 단위로 다음 미래 출현 시각으로 전진
+        if boss["respawn_seconds"]:
+            while spawn_at <= now():
+                spawn_at   += timedelta(seconds=boss["respawn_seconds"])
+                miss_count += (1 if action not in ("cut", "spawn") else 0)
+
         async with get_db() as db:
             await db.execute(
                 "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
@@ -968,13 +974,18 @@ class Boss(commands.Cog):
                 ) as cur:
                     if await cur.fetchone():
                         continue
-                new_at = at + timedelta(seconds=row["respawn_seconds"])
+                new_at   = at + timedelta(seconds=row["respawn_seconds"])
+                new_miss = row["miss_count"] + 1
+                # 계산된 시각이 과거면 미래 출현 시각으로 전진 (중간 미입력 누적)
+                while new_at <= n:
+                    new_at   += timedelta(seconds=row["respawn_seconds"])
+                    new_miss += 1
                 await db.execute(
                     """INSERT INTO schedules
                        (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
                        VALUES (?,?,?,?,?,?)""",
                     (guild_id, self.bn, boss_name, boss_name,
-                     new_at.isoformat(), row["miss_count"] + 1),
+                     new_at.isoformat(), new_miss),
                 )
                 await db.commit()
 
