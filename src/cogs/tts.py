@@ -80,7 +80,8 @@ class TTS(commands.Cog):
                     await voice_client.move_to(vc_channel)
             else:
                 voice_client = await vc_channel.connect()
-        except Exception:
+        except Exception as e:
+            print(f"[TTS] 음성채널 연결 실패 ({vc_channel.name}): {type(e).__name__}: {e}")
             return
 
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
