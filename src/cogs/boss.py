@@ -229,6 +229,12 @@ class Boss(commands.Cog):
     # ── 명령 라우터 ───────────────────────────────────────
 
     async def _dispatch(self, message: discord.Message, cmd: str):
+        # 멀티라인 일괄 처리
+        lines = [l.strip() for l in cmd.splitlines() if l.strip()]
+        if len(lines) >= 2:
+            await self._cmd_bulk_record(message, lines)
+            return
+
         parts = cmd.split()
         if not parts:
             return
@@ -650,6 +656,81 @@ class Boss(commands.Cog):
             await db.commit()
 
         await message.channel.send(f"✅ 서버오픈 {h:02d}:{m:02d} 기준으로 **{count}개** 보스 미입력 예약 완료.")
+
+    # ── 일괄 예약 ─────────────────────────────────────────
+
+    async def _cmd_bulk_record(self, message: discord.Message, lines: list[str]):
+        """
+        멀티라인 일괄 예약.
+        각 줄: HH:MM[:SS] 보스명 [멍|젠|미입력N회 등 무시]
+        → 해당 시각에 보스 예약 삽입. 시각이 현재보다 1분 이상 미래면 어제로 처리하지 않고 그대로 사용.
+        """
+        LINE_RE = re.compile(r"^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+?)(?:\s+\S.*)?$")
+
+        ok_lines = []
+        fail_lines = []
+
+        for raw in lines:
+            # 시각 추출
+            m = re.match(r"^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)", raw)
+            if not m:
+                fail_lines.append(f"❌ `{raw}` — 형식 오류")
+                continue
+
+            time_raw = m.group(1)
+            rest = m.group(2).strip()
+
+            # 뒤에 붙은 멍/젠/미입력N회 등 제거 → 보스명만 추출
+            boss_query = re.split(r"\s+(?:멍|젠|컷|스폰|미입력\d*회|\(미입력\d*회\)).*$", rest)[0].strip()
+            if not boss_query:
+                fail_lines.append(f"❌ `{raw}` — 보스명 없음")
+                continue
+
+            hm = normalize_time(time_raw)
+            if not hm:
+                fail_lines.append(f"❌ `{raw}` — 시각 파싱 실패")
+                continue
+
+            boss = await self._find_boss(message.guild.id, boss_query)
+            if not boss:
+                fail_lines.append(f"❌ `{boss_query}` — 보스를 찾을 수 없습니다")
+                continue
+
+            h, mn = hm
+            spawn_at = now().replace(hour=h, minute=mn, second=0, microsecond=0)
+            # 1분 이상 미래면 어제로 처리 (컷 명령과 동일 로직)
+            if spawn_at > now() + timedelta(minutes=1):
+                spawn_at -= timedelta(days=1)
+
+            # miss_count 추출
+            mc_m = re.search(r"미입력(\d+)회", rest)
+            miss_count = int(mc_m.group(1)) if mc_m else (1 if "멍" in rest else 0)
+
+            async with get_db() as db:
+                await db.execute(
+                    "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
+                    (message.guild.id, self.bn, boss["name"]),
+                )
+                await db.execute(
+                    """INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
+                       VALUES (?,?,?,?,?,?)""",
+                    (message.guild.id, self.bn, boss["name"], boss["name"],
+                     spawn_at.isoformat(), miss_count),
+                )
+                await db.commit()
+
+            remain = fmt_remain(spawn_at - now())
+            suffix = f" (미입력×{miss_count})" if miss_count else ""
+            ok_lines.append(f"✅ **{boss['name']}**{suffix}  →  {spawn_at.strftime('%H:%M')}  ({remain})")
+
+        total = len(ok_lines) + len(fail_lines)
+        desc = "\n".join(ok_lines + fail_lines)
+        embed = discord.Embed(
+            title=f"📋 일괄 예약 완료 ({len(ok_lines)}/{total}건)",
+            description=desc,
+            color=0x57F287 if not fail_lines else 0xFEE75C,
+        )
+        await message.channel.send(embed=embed)
 
     # ── 임의 예약 ─────────────────────────────────────────
 

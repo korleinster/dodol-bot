@@ -1,4 +1,5 @@
 """한국어 초성 검색 유틸리티"""
+import re
 
 CHOSUNG = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ']
 CHOSUNG_SET = set(CHOSUNG)
@@ -48,10 +49,16 @@ def boss_matches(boss_name: str, query: str) -> bool:
 
 
 def normalize_time(raw: str) -> tuple[int, int] | None:
-    """'0530' 또는 '05:30' → (5, 30). 파싱 실패 시 None."""
+    """'0530' 또는 '05:30' 또는 '05:30:00' → (5, 30). 파싱 실패 시 None."""
+    # HH:MM:SS → HH:MM (초 제거)
+    m = re.match(r"^(\d{1,2}):(\d{2}):\d{2}$", raw)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        if 0 <= h <= 23 and 0 <= mn <= 59:
+            return h, mn
     raw = raw.replace(':', '')
     if len(raw) == 4 and raw.isdigit():
-        h, m = int(raw[:2]), int(raw[2:])
-        if 0 <= h <= 23 and 0 <= m <= 59:
-            return h, m
+        h, mn = int(raw[:2]), int(raw[2:])
+        if 0 <= h <= 23 and 0 <= mn <= 59:
+            return h, mn
     return None
