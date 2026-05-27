@@ -103,7 +103,7 @@ class Minigame(commands.Cog):
         n      = max(2, min(len(labels), 8))
         labels = labels[:n]
         icons  = ICONS[:n]
-        TRACK  = 28
+        TRACK  = 26
         pos    = [0] * n
         podium: list[int] = []
 

@@ -57,7 +57,12 @@ def fmt_remain(delta: timedelta) -> str:
         return "출현 중"
     h, r = divmod(total, 3600)
     m = r // 60
-    return f"{h}시간 {m}분 후" if h else f"{m}분 후"
+    if h:
+        return f"{h}시간 {m}분 후"
+    elif m:
+        return f"{m}분 후"
+    else:
+        return "출현 중"
 
 
 def now() -> datetime:
@@ -218,10 +223,11 @@ class Boss(commands.Cog):
             view=BossActionView(guild_id, boss_name, disabled=True)
         )
         result = await self._do_cut_miss(guild_id, boss_name, action)
+        channel = interaction.channel
         if isinstance(result, str):
-            await interaction.followup.send(result)
+            await channel.send(result)
         else:
-            await interaction.followup.send(embed=result)
+            await channel.send(embed=result)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
