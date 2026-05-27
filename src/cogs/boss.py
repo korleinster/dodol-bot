@@ -823,13 +823,27 @@ class Boss(commands.Cog):
     # ── 헬퍼: 보스 검색 ───────────────────────────────────
 
     async def _find_bosses(self, guild_id: int, query: str) -> list[dict]:
-        """쿼리에 매칭되는 모든 보스 목록 반환"""
+        """쿼리에 매칭되는 모든 보스 목록 반환.
+        완전 일치(이름 또는 별칭)가 있으면 해당 보스만 반환 — 부분일치 후보 제거.
+        """
         async with get_db() as db:
             async with db.execute(
                 "SELECT * FROM bosses WHERE guild_id=? AND bot_number=?",
                 (guild_id, self.bn),
             ) as cur:
                 rows = [dict(r) async for r in cur]
+
+        q = query.lower().replace(' ', '')
+        exact = [
+            r for r in rows
+            if any(
+                n.lower().replace(' ', '') == q
+                for n in [r["name"]] + json.loads(r.get("aliases") or "[]")
+            )
+        ]
+        if exact:
+            return exact
+
         return [
             r for r in rows
             if any(boss_matches(n, query) for n in [r["name"]] + json.loads(r.get("aliases") or "[]"))
