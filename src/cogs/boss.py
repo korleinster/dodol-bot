@@ -707,49 +707,88 @@ class Boss(commands.Cog):
     async def _cmd_bulk_record(self, message: discord.Message, lines: list[str]):
         """
         멀티라인 일괄 예약.
-        각 줄: HH:MM[:SS] 보스명 [멍|젠|미입력N회 등 무시]
-        → 해당 시각에 보스 예약 삽입. 시각이 현재보다 1분 이상 미래면 어제로 처리하지 않고 그대로 사용.
+        지원 형식:
+          1) MM/DD HH:MM 보스명 [(미입력×N)] [— X시간 X분 후]  ← 보탐 출력 그대로 붙여넣기
+          2) HH:MM[:SS] 보스명 [멍|젠|미입력N회 등]
         """
-        LINE_RE = re.compile(r"^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+?)(?:\s+\S.*)?$")
-
         ok_lines = []
         fail_lines = []
 
         for raw in lines:
-            # 시각 추출
-            m = re.match(r"^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)", raw)
-            if not m:
-                fail_lines.append(f"❌ `{raw}` — 형식 오류")
-                continue
+            spawn_at   = None
+            miss_count = 0
+            boss_query = ""
 
-            time_raw = m.group(1)
-            rest = m.group(2).strip()
+            # ── 형식 1: MM/DD HH:MM 보스명 [(미입력×N)] [— ...] ──
+            m1 = re.match(
+                r"^(\d{2}/\d{2})\s+(\d{2}:\d{2})\s+(.+?)(?:\s+[—–-]+.*)?$", raw
+            )
+            if m1:
+                date_str = m1.group(1)   # "05/28"
+                time_str = m1.group(2)   # "23:24"
+                rest     = m1.group(3).strip()
 
-            # 뒤에 붙은 멍/젠/미입력N회 등 제거 → 보스명만 추출
-            boss_query = re.split(r"\s+(?:멍|젠|컷|스폰|미입력\d*회|\(미입력\d*회\)).*$", rest)[0].strip()
+                # miss_count: (미입력×N) 또는 미입력N회
+                mc_m = re.search(r"미입력[×x](\d+)", rest) or re.search(r"미입력(\d+)회", rest)
+                miss_count = int(mc_m.group(1)) if mc_m else 0
+
+                # 보스명: (미입력×N) 이후 제거
+                boss_query = re.sub(r"\s*[\(（]미입력.*$", "", rest).strip()
+
+                try:
+                    mo, dy = int(date_str[:2]), int(date_str[3:])
+                    hh, mm = int(time_str[:2]), int(time_str[3:])
+                except ValueError:
+                    fail_lines.append(f"❌ `{raw}` — 날짜/시각 파싱 실패")
+                    continue
+
+                yr = now().year
+                try:
+                    spawn_at = datetime(yr, mo, dy, hh, mm, 0)
+                except ValueError:
+                    fail_lines.append(f"❌ `{raw}` — 유효하지 않은 날짜")
+                    continue
+                # 연말 경계: 이미 1주일 이상 지난 날짜면 내년으로 처리
+                if spawn_at < now() - timedelta(days=7):
+                    spawn_at = spawn_at.replace(year=yr + 1)
+
+            else:
+                # ── 형식 2: HH:MM[:SS] 보스명 ──
+                m2 = re.match(r"^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)", raw)
+                if not m2:
+                    fail_lines.append(f"❌ `{raw}` — 형식 오류")
+                    continue
+
+                time_raw = m2.group(1)
+                rest     = m2.group(2).strip()
+
+                # miss_count
+                mc_m = re.search(r"미입력[×x](\d+)", rest) or re.search(r"미입력(\d+)회", rest)
+                miss_count = int(mc_m.group(1)) if mc_m else (1 if "멍" in rest else 0)
+
+                # 보스명
+                boss_query = re.split(
+                    r"\s+(?:멍|젠|컷|스폰|미입력\d*회|\(미입력.*?\)).*$", rest
+                )[0].strip()
+
+                hm = normalize_time(time_raw)
+                if not hm:
+                    fail_lines.append(f"❌ `{raw}` — 시각 파싱 실패")
+                    continue
+
+                h, mn = hm
+                spawn_at = now().replace(hour=h, minute=mn, second=0, microsecond=0)
+                if spawn_at <= now():
+                    spawn_at += timedelta(days=1)
+
             if not boss_query:
                 fail_lines.append(f"❌ `{raw}` — 보스명 없음")
-                continue
-
-            hm = normalize_time(time_raw)
-            if not hm:
-                fail_lines.append(f"❌ `{raw}` — 시각 파싱 실패")
                 continue
 
             boss = await self._find_boss(message.guild.id, boss_query)
             if not boss:
                 fail_lines.append(f"❌ `{boss_query}` — 보스를 찾을 수 없습니다")
                 continue
-
-            h, mn = hm
-            spawn_at = now().replace(hour=h, minute=mn, second=0, microsecond=0)
-            # 이미 지난 시각이면 내일로 처리 (일괄 입력은 미래 예약이 목적)
-            if spawn_at <= now():
-                spawn_at += timedelta(days=1)
-
-            # miss_count 추출
-            mc_m = re.search(r"미입력(\d+)회", rest)
-            miss_count = int(mc_m.group(1)) if mc_m else (1 if "멍" in rest else 0)
 
             async with get_db() as db:
                 await db.execute(
@@ -766,7 +805,7 @@ class Boss(commands.Cog):
 
             remain = fmt_remain(spawn_at - now())
             suffix = f" (미입력×{miss_count})" if miss_count else ""
-            ok_lines.append(f"✅ **{boss['name']}**{suffix}  →  {spawn_at.strftime('%H:%M')}  ({remain})")
+            ok_lines.append(f"✅ **{boss['name']}**{suffix}  →  {spawn_at.strftime('%m/%d %H:%M')}  ({remain})")
 
         total = len(ok_lines) + len(fail_lines)
         desc = "\n".join(ok_lines + fail_lines)
