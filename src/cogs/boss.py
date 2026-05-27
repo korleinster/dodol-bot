@@ -590,7 +590,9 @@ class Boss(commands.Cog):
         if time_hm:
             h, m = time_hm
             base_time = base_time.replace(hour=h, minute=m, second=0, microsecond=0)
-            if base_time > now() + timedelta(minutes=1):
+            # cut/miss는 "언제 잡았는지" 기준 → 미래 시각이면 어제로 보정
+            # spawn(젠)은 "언제 나오는지" 기준 → 미래 시각도 그대로 사용
+            if action != "spawn" and base_time > now() + timedelta(minutes=1):
                 base_time -= timedelta(days=1)
 
         if action == "cut":
