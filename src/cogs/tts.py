@@ -83,9 +83,10 @@ class TTS(commands.Cog):
                 if voice_client:
                     try:
                         await voice_client.disconnect(force=True)
+                        await asyncio.sleep(0.5)  # Discord가 disconnect 처리할 시간 확보
                     except Exception:
                         pass
-                voice_client = await vc_channel.connect()
+                voice_client = await vc_channel.connect(timeout=60.0)
         except Exception as e:
             print(f"[TTS] 음성채널 연결 실패 ({vc_channel.name}): {type(e).__name__}: {e}")
             return
@@ -109,7 +110,8 @@ class TTS(commands.Cog):
         try:
             if voice_client.is_playing():
                 voice_client.stop()
-            voice_client.play(discord.FFmpegPCMAudio(tmp_path), after=after)
+            source = await discord.FFmpegOpusAudio.from_probe(tmp_path)
+            voice_client.play(source, after=after)
             print(f"[TTS] 재생 시작: {text[:30]}")
         except Exception as e:
             print(f"[TTS] 재생 시작 실패: {type(e).__name__}: {e}")
