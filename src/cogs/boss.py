@@ -708,68 +708,50 @@ class Boss(commands.Cog):
         """
         멀티라인 일괄 예약.
         지원 형식:
-          1) MM/DD HH:MM 보스명 [(미입력×N)] [— X시간 X분 후]  ← 보탐 출력 그대로 붙여넣기
-          2) HH:MM[:SS] 보스명 [멍|젠|미입력N회 등]
+          1) MM/DD HH:MM 보스명 [나머지 무시]  ← 보탐 출력 그대로 붙여넣기
+          2) HH:MM[:SS] 보스명 [나머지 무시]
+        (미입력×N), — X시간 후 등 뒤쪽 내용은 모두 무시하고 miss_count=0으로 등록.
         """
         ok_lines = []
         fail_lines = []
 
         for raw in lines:
             spawn_at   = None
-            miss_count = 0
             boss_query = ""
 
-            # ── 형식 1: MM/DD HH:MM 보스명 [(미입력×N)] [— ...] ──
-            m1 = re.match(
-                r"^(\d{2}/\d{2})\s+(\d{2}:\d{2})\s+(.+?)(?:\s+[—–-]+.*)?$", raw
-            )
+            # ── 형식 1: MM/DD HH:MM 보스명 [무시] ──
+            m1 = re.match(r"^(\d{2}/\d{2})\s+(\d{2}:\d{2})\s+(.+)", raw)
             if m1:
                 date_str = m1.group(1)   # "05/28"
                 time_str = m1.group(2)   # "23:24"
-                rest     = m1.group(3).strip()
+                rest     = m1.group(3)
 
-                # miss_count: (미입력×N) 또는 미입력N회
-                mc_m = re.search(r"미입력[×x](\d+)", rest) or re.search(r"미입력(\d+)회", rest)
-                miss_count = int(mc_m.group(1)) if mc_m else 0
-
-                # 보스명: (미입력×N) 이후 제거
-                boss_query = re.sub(r"\s*[\(（]미입력.*$", "", rest).strip()
+                # 보스명: (미입력...) 또는 — 이후 모두 제거
+                boss_query = re.split(r"\s+(?:[\(（]미입력|[—–-])", rest)[0].strip()
 
                 try:
                     mo, dy = int(date_str[:2]), int(date_str[3:])
                     hh, mm = int(time_str[:2]), int(time_str[3:])
+                    yr = now().year
+                    spawn_at = datetime(yr, mo, dy, hh, mm, 0)
                 except ValueError:
                     fail_lines.append(f"❌ `{raw}` — 날짜/시각 파싱 실패")
                     continue
-
-                yr = now().year
-                try:
-                    spawn_at = datetime(yr, mo, dy, hh, mm, 0)
-                except ValueError:
-                    fail_lines.append(f"❌ `{raw}` — 유효하지 않은 날짜")
-                    continue
-                # 연말 경계: 이미 1주일 이상 지난 날짜면 내년으로 처리
+                # 연말 경계: 1주일 이상 지난 날짜면 내년
                 if spawn_at < now() - timedelta(days=7):
                     spawn_at = spawn_at.replace(year=yr + 1)
 
             else:
-                # ── 형식 2: HH:MM[:SS] 보스명 ──
+                # ── 형식 2: HH:MM[:SS] 보스명 [무시] ──
                 m2 = re.match(r"^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)", raw)
                 if not m2:
                     fail_lines.append(f"❌ `{raw}` — 형식 오류")
                     continue
 
                 time_raw = m2.group(1)
-                rest     = m2.group(2).strip()
+                rest     = m2.group(2)
 
-                # miss_count
-                mc_m = re.search(r"미입력[×x](\d+)", rest) or re.search(r"미입력(\d+)회", rest)
-                miss_count = int(mc_m.group(1)) if mc_m else (1 if "멍" in rest else 0)
-
-                # 보스명
-                boss_query = re.split(
-                    r"\s+(?:멍|젠|컷|스폰|미입력\d*회|\(미입력.*?\)).*$", rest
-                )[0].strip()
+                boss_query = re.split(r"\s+(?:[\(（]미입력|[—–-]|멍|젠|컷|스폰)", rest)[0].strip()
 
                 hm = normalize_time(time_raw)
                 if not hm:
@@ -799,13 +781,12 @@ class Boss(commands.Cog):
                     """INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
                        VALUES (?,?,?,?,?,?)""",
                     (message.guild.id, self.bn, boss["name"], boss["name"],
-                     spawn_at.isoformat(), miss_count),
+                     spawn_at.isoformat(), 0),
                 )
                 await db.commit()
 
             remain = fmt_remain(spawn_at - now())
-            suffix = f" (미입력×{miss_count})" if miss_count else ""
-            ok_lines.append(f"✅ **{boss['name']}**{suffix}  →  {spawn_at.strftime('%m/%d %H:%M')}  ({remain})")
+            ok_lines.append(f"✅ **{boss['name']}**  →  {spawn_at.strftime('%m/%d %H:%M')}  ({remain})")
 
         total = len(ok_lines) + len(fail_lines)
         desc = "\n".join(ok_lines + fail_lines)
