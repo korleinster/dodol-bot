@@ -78,24 +78,7 @@ class TTS(commands.Cog):
         if not isinstance(vc_channel, discord.VoiceChannel):
             return
 
-        voice_client: discord.VoiceClient | None = guild.voice_client  # type: ignore
-        try:
-            if voice_client and voice_client.is_connected():
-                if voice_client.channel.id != vc_id:
-                    await voice_client.move_to(vc_channel)
-            else:
-                # 좀비 연결(is_connected=False인데 voice_client 객체는 존재) 강제 해제
-                if voice_client:
-                    try:
-                        await voice_client.disconnect(force=True)
-                        await asyncio.sleep(0.5)  # Discord가 disconnect 처리할 시간 확보
-                    except Exception:
-                        pass
-                voice_client = await vc_channel.connect(timeout=60.0)
-        except Exception as e:
-            print(f"[TTS] 음성채널 연결 실패 ({vc_channel.name}): {type(e).__name__}: {e}")
-            return
-
+        # 1. TTS 파일 먼저 생성 (시간이 걸리므로 연결 전에 처리)
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp_path = f.name
 
@@ -105,6 +88,25 @@ class TTS(commands.Cog):
             print(f"[TTS] TTS 파일 생성 완료: {tmp_path}")
         except Exception as e:
             print(f"[TTS] TTS 파일 생성 실패: {type(e).__name__}: {e}")
+            return
+
+        # 2. 파일 준비 후 음성채널 연결
+        voice_client: discord.VoiceClient | None = guild.voice_client  # type: ignore
+        try:
+            if voice_client and voice_client.is_connected():
+                if voice_client.channel.id != vc_id:
+                    await voice_client.move_to(vc_channel)
+            else:
+                # 좀비 연결 강제 해제
+                if voice_client:
+                    try:
+                        await voice_client.disconnect(force=True)
+                        await asyncio.sleep(0.5)
+                    except Exception:
+                        pass
+                voice_client = await vc_channel.connect(timeout=60.0)
+        except Exception as e:
+            print(f"[TTS] 음성채널 연결 실패 ({vc_channel.name}): {type(e).__name__}: {e}")
             return
 
         def after(err):
