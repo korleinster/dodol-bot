@@ -38,11 +38,12 @@ def boss_matches(boss_name: str, query: str) -> bool:
 
     boss_cs = get_chosung(boss_name)
     if is_chosung_only(q):
-        return len(q) >= 3 and q in boss_cs
+        # 초성 입력은 보스 이름 앞부터만 매칭 (중간 포함 X)
+        return len(q) >= 2 and boss_cs.startswith(q)
 
-    # 쿼리에 단독 자음이 섞인 경우(오타) 초성-초성 매칭 제외
+    # 완전 글자 쿼리 → 추출된 초성이 보스 초성 앞부터 매칭되어야 함
     query_cs = get_chosung(q)
-    if query_cs and query_cs in boss_cs and not any(c in CHOSUNG_SET for c in q):
+    if query_cs and boss_cs.startswith(query_cs) and not any(c in CHOSUNG_SET for c in q):
         return True
 
     return False
