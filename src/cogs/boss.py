@@ -698,9 +698,9 @@ class Boss(commands.Cog):
 
             h, mn = hm
             spawn_at = now().replace(hour=h, minute=mn, second=0, microsecond=0)
-            # 1분 이상 미래면 어제로 처리 (컷 명령과 동일 로직)
-            if spawn_at > now() + timedelta(minutes=1):
-                spawn_at -= timedelta(days=1)
+            # 이미 지난 시각이면 내일로 처리 (일괄 입력은 미래 예약이 목적)
+            if spawn_at <= now():
+                spawn_at += timedelta(days=1)
 
             # miss_count 추출
             mc_m = re.search(r"미입력(\d+)회", rest)
