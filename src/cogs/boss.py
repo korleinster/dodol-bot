@@ -156,29 +156,21 @@ def parse_cut_command(text: str) -> dict | None:
 # ── 컷/멍 인라인 버튼 ─────────────────────────────────────────────────────────
 
 class BossActionView(discord.ui.View):
-    def __init__(self, boss_cog: "Boss", guild_id: int, boss_name: str):
-        super().__init__(timeout=600)
-        self.boss_cog  = boss_cog
-        self.guild_id  = guild_id
-        self.boss_name = boss_name
-
-    async def _handle(self, interaction: discord.Interaction, action: str):
-        for item in self.children:
-            item.disabled = True  # type: ignore
-        await interaction.response.edit_message(view=self)
-        result = await self.boss_cog._do_cut_miss(self.guild_id, self.boss_name, action)
-        if isinstance(result, str):
-            await interaction.followup.send(result)
-        else:
-            await interaction.followup.send(embed=result)
-
-    @discord.ui.button(label="✅ 컷", style=discord.ButtonStyle.success)
-    async def cut_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle(interaction, "cut")
-
-    @discord.ui.button(label="😶 멍", style=discord.ButtonStyle.secondary)
-    async def miss_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle(interaction, "miss")
+    """custom_id에 guild_id:boss_name 인코딩 → 봇 재시작 후에도 on_interaction으로 처리 가능"""
+    def __init__(self, guild_id: int, boss_name: str, disabled: bool = False):
+        super().__init__(timeout=None)
+        self.add_item(discord.ui.Button(
+            label="✅ 컷",
+            style=discord.ButtonStyle.success,
+            custom_id=f"boss_cut:{guild_id}:{boss_name}",
+            disabled=disabled,
+        ))
+        self.add_item(discord.ui.Button(
+            label="😶 멍",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"boss_miss:{guild_id}:{boss_name}",
+            disabled=disabled,
+        ))
 
 
 # ── Cog ──────────────────────────────────────────────────────────────────────
@@ -204,6 +196,32 @@ class Boss(commands.Cog):
                 return row[0] if row else None
 
     # ── 이벤트 ────────────────────────────────────────────
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        """버튼 상호작용 처리 — 봇 재시작 후에도 custom_id로 동작"""
+        if interaction.type != discord.InteractionType.component:
+            return
+        custom_id = (interaction.data or {}).get("custom_id", "")
+        if not custom_id.startswith(("boss_cut:", "boss_miss:")):
+            return
+
+        try:
+            prefix, guild_id_str, boss_name = custom_id.split(":", 2)
+        except ValueError:
+            return
+
+        action = "cut" if prefix == "boss_cut" else "miss"
+        guild_id = int(guild_id_str)
+
+        await interaction.response.edit_message(
+            view=BossActionView(guild_id, boss_name, disabled=True)
+        )
+        result = await self._do_cut_miss(guild_id, boss_name, action)
+        if isinstance(result, str):
+            await interaction.followup.send(result)
+        else:
+            await interaction.followup.send(embed=result)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -857,7 +875,7 @@ class Boss(commands.Cog):
                 description=f"**{r['content']}** {miss_str}— {remain}",
                 color=0xED4245,
             )
-            view = BossActionView(self, r["guild_id"], r["boss_name"]) if r["boss_name"] and not r["is_fixed"] else None
+            view = BossActionView(r["guild_id"], r["boss_name"]) if r["boss_name"] and not r["is_fixed"] else None
             await channel.send(embed=embed, view=view)
 
             tts_cog = self.bot.get_cog("TTS")
