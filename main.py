@@ -10,7 +10,7 @@ load_dotenv()
 COGS = [
     "src.cogs.setup",
     "src.cogs.boss",
-    "src.cogs.tts",
+    # "src.cogs.tts",  # 임시 비활성화 (음성채널 연결 문제 해결 중)
     "src.cogs.market",
     "src.cogs.minigame",
     "src.cogs.weather",
