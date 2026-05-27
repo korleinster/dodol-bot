@@ -23,6 +23,7 @@ class TTS(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.bn  = bot.bot_number
+        self._connecting: set[int] = set()  # 현재 연결 시도 중인 guild_id
 
     # ── DB 헬퍼 ───────────────────────────────────────────
 
@@ -65,21 +66,33 @@ class TTS(commands.Cog):
                 await voice_client.move_to(vc_channel)
             return voice_client
 
-        # 좀비 연결 강제 해제
-        if voice_client:
-            try:
-                await voice_client.disconnect(force=True)
-                await asyncio.sleep(0.5)
-            except Exception:
-                pass
+        # 동시 연결 시도 방지 — 다른 코루틴이 이미 연결 중이면 잠시 대기 후 재확인
+        if guild.id in self._connecting:
+            await asyncio.sleep(2.0)
+            vc: discord.VoiceClient | None = guild.voice_client  # type: ignore
+            return vc if (vc and vc.is_connected()) else None
 
+        self._connecting.add(guild.id)
         try:
-            voice_client = await vc_channel.connect(timeout=60.0, reconnect=True)
+            # 좀비 연결 강제 해제
+            if voice_client:
+                try:
+                    await voice_client.disconnect(force=True)
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+
+            # reconnect=False: discord.py 자동 재연결 비활성화
+            # → 연결이 끊기면 voice_keepalive(60s)가 다음 재연결을 담당
+            # reconnect=True 일 때 UDP 소켓 실패 시 1~3초마다 재연결 루프 발생
+            voice_client = await vc_channel.connect(timeout=15.0, reconnect=False)
             print(f"[TTS] 음성채널 연결: {vc_channel.name}")
             return voice_client
         except Exception as e:
             print(f"[TTS] 음성채널 연결 실패 ({vc_channel.name}): {type(e).__name__}: {e}")
             return None
+        finally:
+            self._connecting.discard(guild.id)
 
     @commands.Cog.listener()
     async def on_ready(self):
