@@ -79,6 +79,12 @@ class TTS(commands.Cog):
                 if voice_client.channel.id != vc_id:
                     await voice_client.move_to(vc_channel)
             else:
+                # 좀비 연결(is_connected=False인데 voice_client 객체는 존재) 강제 해제
+                if voice_client:
+                    try:
+                        await voice_client.disconnect(force=True)
+                    except Exception:
+                        pass
                 voice_client = await vc_channel.connect()
         except Exception as e:
             print(f"[TTS] 음성채널 연결 실패 ({vc_channel.name}): {type(e).__name__}: {e}")
