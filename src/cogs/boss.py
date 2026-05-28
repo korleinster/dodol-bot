@@ -507,7 +507,7 @@ class Boss(commands.Cog):
             at = datetime.fromisoformat(r["scheduled_at"])
             remain = fmt_remain(at - n)
             miss = f" (미입력×{r['miss_count']})" if r["miss_count"] else ""
-            lines.append(f"`{at.strftime('%m/%d %H:%M')}` **{r['content']}**{miss}  — {remain}")
+            lines.append(f"**{at.strftime('%m/%d %H:%M')}** {r['content']}{miss}  — {remain}")
 
         if not include_fixed:
             title = f"📋 예약 목록 (가까운 5건 / 전체 {total}건)"
