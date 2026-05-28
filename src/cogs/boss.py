@@ -747,6 +747,10 @@ class Boss(commands.Cog):
                 fail_lines.append(f"❌ `{boss_query}` — 보스를 찾을 수 없습니다")
                 continue
 
+            if boss.get("fixed"):
+                fail_lines.append(f"⚠️ `{boss['name']}` — 고정 타임 보스는 일괄 예약할 수 없습니다")
+                continue
+
             async with get_db() as db:
                 await db.execute(
                     "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
