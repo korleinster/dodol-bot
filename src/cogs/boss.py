@@ -483,9 +483,8 @@ class Boss(commands.Cog):
 
     async def _cmd_botam(self, message: discord.Message, include_fixed: bool):
         async with get_db() as db:
+            # 전체 개수는 항상 is_fixed 구분 없이 세어 보탐/보탐+ 간 숫자 일치
             count_q = "SELECT COUNT(*) FROM schedules WHERE guild_id=? AND bot_number=? AND notified=0"
-            if not include_fixed:
-                count_q += " AND is_fixed=0"
             async with db.execute(count_q, (message.guild.id, self.bn)) as cur:
                 total = (await cur.fetchone())[0]
 
