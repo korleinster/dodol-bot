@@ -846,8 +846,10 @@ class Boss(commands.Cog):
     async def check_schedules(self):
         n = now()
         base = (
-            "SELECT s.*, gc.text_channel_id FROM schedules s "
+            "SELECT s.*, gc.text_channel_id, COALESCE(b.fixed, 0) AS boss_fixed "
+            "FROM schedules s "
             "JOIN guild_config gc ON s.guild_id=gc.guild_id AND s.bot_number=gc.bot_number "
+            "LEFT JOIN bosses b ON s.guild_id=b.guild_id AND s.bot_number=b.bot_number AND s.boss_name=b.name "
             "WHERE s.bot_number=? AND s.notified=0"
         )
         # 겹치지 않는 구간으로 분리
@@ -916,7 +918,7 @@ class Boss(commands.Cog):
                 description=f"**{r['content']}** {miss_str}— {remain}",
                 color=0xED4245,
             )
-            view = BossActionView(r["guild_id"], r["boss_name"]) if r["boss_name"] and not r["is_fixed"] else None
+            view = BossActionView(r["guild_id"], r["boss_name"]) if r["boss_name"] and not r["is_fixed"] and not r["boss_fixed"] else None
             await channel.send(embed=embed, view=view)
 
             tts_cog = self.bot.get_cog("TTS")
