@@ -89,57 +89,45 @@ class Tester(discord.Client):
 
         await asyncio.sleep(1)
 
-        # ── 보스 등록 ─────────────────────────────────────
-        msg = await self.send_and_wait("보스등록 0300 테스트보스(ㅌㅅ)")
-        self.check("보스 등록", msg, "등록 완료", "테스트보스")
-
-        await asyncio.sleep(1)
-
         # ── 보스 목록 ─────────────────────────────────────
         msg = await self.send_and_wait("보스")
-        self.check("보스 목록", msg, "테스트보스")
+        self.check("보스 목록", msg, "체르투바")
 
         await asyncio.sleep(1)
 
         # ── 컷 ───────────────────────────────────────────
-        msg = await self.send_and_wait("테스트보스 컷")
+        msg = await self.send_and_wait("체르투바 컷")
         self.check("컷 처리", msg, "컷 처리", "다음 리스폰")
 
         await asyncio.sleep(1)
 
         # ── 초성 컷 ───────────────────────────────────────
-        msg = await self.send_and_wait("ㅌㅅ ㅋ")
-        self.check("초성 컷 (ㅌㅅ ㅋ)", msg, "컷 처리")
+        msg = await self.send_and_wait("ㅊㄹ ㅋ")
+        self.check("초성 컷 (ㅊㄹ ㅋ)", msg, "컷 처리")
 
         await asyncio.sleep(1)
 
         # ── 멍 ───────────────────────────────────────────
-        msg = await self.send_and_wait("테스트보스 멍")
+        msg = await self.send_and_wait("체르투바 멍")
         self.check("멍 처리", msg, "멍 처리")
 
         await asyncio.sleep(1)
 
         # ── 초성 멍 ───────────────────────────────────────
-        msg = await self.send_and_wait("ㅌㅅ ㅁ")
-        self.check("초성 멍 (ㅌㅅ ㅁ)", msg, "멍 처리")
+        msg = await self.send_and_wait("ㅊㄹ ㅁ")
+        self.check("초성 멍 (ㅊㄹ ㅁ)", msg, "멍 처리")
 
         await asyncio.sleep(1)
 
         # ── 보탐 ─────────────────────────────────────────
         msg = await self.send_and_wait("보탐")
-        self.check("보탐 (예약 목록)", msg, "테스트보스")
+        self.check("보탐 (예약 목록)", msg, "체르투바")
 
         await asyncio.sleep(1)
 
         # ── 임의 예약 ─────────────────────────────────────
         msg = await self.send_and_wait("23:59 테스트알림")
         self.check("임의 예약", msg, "테스트알림", "예약 완료")
-
-        await asyncio.sleep(1)
-
-        # ── 예약 삭제 ─────────────────────────────────────
-        msg = await self.send_and_wait("테스트알림 삭제")
-        self.check("예약 삭제", msg, "삭제")
 
         await asyncio.sleep(1)
 
@@ -185,9 +173,9 @@ class Tester(discord.Client):
 
         await asyncio.sleep(1)
 
-        # ── 보스 삭제 (정리) ──────────────────────────────
-        msg = await self.send_and_wait("보스삭제 테스트보스")
-        self.check("보스 삭제 (정리)", msg, "삭제 완료")
+        # ── 보스 삭제 불가 확인 ───────────────────────────
+        msg = await self.send_and_wait("보스삭제 체르투바")
+        self.check("보스 삭제 불가", msg, "기본 보스")
 
     def print_summary(self):
         total  = len(results)

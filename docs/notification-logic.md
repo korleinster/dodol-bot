@@ -41,8 +41,8 @@
 - **본문**: `{content} {미입력×N} — {남은시간}`
   - 남은 시간 > 0: `N분 후`
   - 남은 시간 ≤ 0: `출현 중`
-- **버튼**: 일반 보스 예약에만 `✅ 컷 / 😶 멍` 버튼 (View, 유효시간 600초)
-  - 고정 보스(`is_fixed=1`)는 버튼 미표시
+- **버튼**: 일반 보스 예약에만 `✅ 컷 / 😶 멍` 버튼 (View, `timeout=None` 만료 없음)
+  - 고정 보스(`is_fixed=1` 또는 `bosses.fixed=1`)는 버튼 미표시
 - **TTS**: 정각 알림 시 음성 채널에서 `{content} {미입력} {남은시간}` 자동 읽기
 
 ---
@@ -84,8 +84,8 @@
 2. boss_name 기준으로 가장 최근 notified 행 1개씩 추출
 3. scheduled_at + auto_schedule_seconds > now 이면 SKIP (유예시간 내)
 4. notified=0 예약이 이미 있으면 SKIP (컷/멍 처리 완료)
-5. new_at = scheduled_at + respawn_seconds 로 다음 예약 INSERT
-6. miss_count = 이전 miss_count + 1
+5. new_at = scheduled_at + respawn_seconds (미래가 될 때까지 반복 전진, miss_count 누적)
+6. miss_count = 이전 miss_count + 1 (전진 횟수만큼 추가 누적)
 ```
 
 > `miss_count`는 컷/멍 처리 시 0으로 초기화됨.
@@ -106,6 +106,6 @@ else:  → "N시간 N분 후"
 ## 보탐(예약 목록) 표시 기준
 
 - `notified=0` 행만 표시
-- `보탐` / `ㅋ` / `z`: `is_fixed=0` 필터 + 최대 5건
+- `보탐` / `ㅋ` / `z`: `is_fixed=0` 필터 + 최대 5건, 타이틀에 전체 건수(`is_fixed` 무관) 표시
 - `보탐+` / `ㅋ+` / `z+`: 전체 (고정 포함) 건수 제한 없음
 - `Z`: 보탐 5건 + 1순위 보스 TTS 읽기

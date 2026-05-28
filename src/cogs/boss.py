@@ -694,6 +694,8 @@ class Boss(commands.Cog):
             spawn_at   = None
             boss_query = ""
 
+            miss_count = 0
+
             # ── 형식 1: MM/DD HH:MM 보스명 [무시] ──
             m1 = re.match(r"^(\d{2}/\d{2})\s+(\d{2}:\d{2})\s+(.+)", raw)
             if m1:
@@ -703,6 +705,11 @@ class Boss(commands.Cog):
 
                 # 보스명: (미입력...) 또는 — 이후 모두 제거
                 boss_query = re.split(r"\s+(?:[\(（]미입력|[—–-])", rest)[0].strip()
+
+                # miss_count 파싱: (미입력×N) 에서 N 추출
+                mc = re.search(r"[\(（]미입력×(\d+)[\)）]", rest)
+                if mc:
+                    miss_count = int(mc.group(1))
 
                 try:
                     mo, dy = int(date_str[:2]), int(date_str[3:])
@@ -727,6 +734,11 @@ class Boss(commands.Cog):
                 rest     = m2.group(2)
 
                 boss_query = re.split(r"\s+(?:[\(（]미입력|[—–-]|멍|젠|컷|스폰)", rest)[0].strip()
+
+                # miss_count 파싱: (미입력×N) 에서 N 추출
+                mc = re.search(r"[\(（]미입력×(\d+)[\)）]", rest)
+                if mc:
+                    miss_count = int(mc.group(1))
 
                 hm = normalize_time(time_raw)
                 if not hm:
@@ -760,7 +772,7 @@ class Boss(commands.Cog):
                     """INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
                        VALUES (?,?,?,?,?,?)""",
                     (message.guild.id, self.bn, boss["name"], boss["name"],
-                     spawn_at.isoformat(), 0),
+                     spawn_at.isoformat(), miss_count),
                 )
                 await db.commit()
 

@@ -38,7 +38,7 @@
 |---|---|
 | 언어 | Python 3.11 |
 | 봇 프레임워크 | discord.py 2.3 |
-| TTS | edge-tts (Microsoft, `ko-KR-SunHiNeural`) |
+| TTS | gTTS (Google TTS, `ko`) |
 | 데이터베이스 | SQLite + aiosqlite |
 | 시세 API | PLAYNC 개발자센터 (`dev-api.plaync.com/l2m/v1.0`) |
 | 날씨 API | Open-Meteo (무료, 키 불필요) |
@@ -75,7 +75,7 @@ TESTER_BOT_ID=테스터봇_USER_ID
 python test_bot.py
 ```
 
-테스터 봇은 도돌봇이 배치된 채널에 자동으로 명령어를 전송하고 응답을 검증합니다. 17개 항목 전체 통과 시 정상.
+테스터 봇은 도돌봇이 배치된 채널에 자동으로 명령어를 전송하고 응답을 검증합니다. 15개 항목 전체 통과 시 정상.
 
 ---
 
@@ -230,13 +230,15 @@ PLAYNC API 키는 [PLAYNC 개발자센터](https://developers.plaync.com) 에서
 ```
 17:07:00 탈킨 멍
 17:07:08 티미트리스
-17:08:00 레피로 멍
-17:34:00 켈소스 (미입력2회)
+05/28 17:34 켈소스 (미입력×1) — 1시간 후
+05/28 17:36 사반 — 1시간 2분 후
 ```
 
-- 시각 앞에 `HH:MM` 또는 `HH:MM:SS` 형식 모두 지원 (초는 무시)
-- 시각 뒤의 보스명만 추출, 멍/젠/미입력N회 등 부가 표시는 참고용으로만 사용
-- 미입력N회가 있으면 miss_count 기록
+- `HH:MM` / `HH:MM:SS` 형식 지원 (초 무시)
+- `MM/DD HH:MM 보스명 ...` 형식 지원 — 보탐 출력 그대로 붙여넣기 가능
+- 보스명 뒤의 내용(멍/젠/`— X시간 후` 등)은 무시
+- `(미입력×N)` 표기가 있으면 miss_count에 반영
+- 고정 타임 보스는 스킵 처리
 
 ---
 
@@ -250,7 +252,7 @@ PLAYNC API 키는 [PLAYNC 개발자센터](https://developers.plaync.com) 에서
 | 1분 전 | 🟠 주황 | ⚠️ 1분 후 출현 |
 | 정각 | 🔴 빨강 | ⚔️ 보스 출현! + TTS + **컷/멍 버튼** |
 
-정각 알림에는 **✅ 컷 / 😶 멍** 버튼이 표시됩니다. 버튼을 누르면 바로 컷/멍 처리됩니다 (10분 유효).
+정각 알림에는 **✅ 컷 / 😶 멍** 버튼이 표시됩니다. 버튼을 누르면 바로 컷/멍 처리됩니다 (고정 타임 보스는 버튼 미표시).
 
 ```
 보탐 / ㅂㅌ / ㅋ / z  ← 가까운 예약 5건 (전체 건수 표시)
@@ -316,7 +318,7 @@ Z                    ← 가까운 5건 + TTS 음성 알림
 
 ### TTS
 
-배치된 음성 채널에서 텍스트를 읽어줍니다. 음성: `ko-KR-SunHiNeural`.
+배치된 음성 채널에서 텍스트를 읽어줍니다 (gTTS, 한국어). 음성 채널에 상시 연결 유지.
 
 ```
 ㅍ 좋은 아침입니다         ← 해당 텍스트를 음성 채널에서 읽어줌
@@ -476,7 +478,7 @@ DiscordBot/
 | [docs/boss-data.md](docs/boss-data.md) | 기본 보스 전체 목록 및 데이터 기준 |
 | [docs/notification-logic.md](docs/notification-logic.md) | 알림 타이밍, 자동 재예약, 자동 미입력 흐름 |
 | [docs/error-cases.md](docs/error-cases.md) | 예외 상황별 봇 동작 |
-| [docs/test-spec.md](docs/test-spec.md) | E2E 테스트 17개 항목 및 검증 기준 |
+| [docs/test-spec.md](docs/test-spec.md) | E2E 테스트 15개 항목 및 검증 기준 |
 
 ---
 
