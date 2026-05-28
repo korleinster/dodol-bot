@@ -556,7 +556,7 @@ class Boss(commands.Cog):
             return f"❌ **{query}** 에 해당하는 보스를 찾을 수 없습니다."
 
         if boss.get("fixed"):
-            return f"❌ **{boss['name']}** 은 고정 일정 보스로 컷/멍 처리가 불필요합니다."
+            return f"❌ **{boss['name']}** 은 고정 타임 보스입니다. 컷/멍/젠 처리를 할 수 없습니다."
 
         if boss["respawn_seconds"] is None:
             return f"❌ **{boss['name']}** 은 리스폰이 설정되지 않았습니다."
