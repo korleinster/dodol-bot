@@ -546,30 +546,6 @@ class Boss(commands.Cog):
 
     # ── z/ㅋ (다음 예약) ──────────────────────────────────
 
-    async def _cmd_next(self, message: discord.Message, include_fixed: bool, tts: bool):
-        async with get_db() as db:
-            q = "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? AND notified=0"
-            if not include_fixed:
-                q += " AND is_fixed=0"
-            q += " ORDER BY scheduled_at LIMIT 1"
-            async with db.execute(q, (message.guild.id, self.bn)) as cur:
-                row = await cur.fetchone()
-
-        if not row:
-            await message.channel.send("예약된 일정이 없습니다.")
-            return
-
-        row = dict(row)
-        at = datetime.fromisoformat(row["scheduled_at"])
-        remain = fmt_remain(at - now())
-        text = f"**{row['content']}**  {at.strftime('%H:%M')}  ({remain})"
-        await message.channel.send(text)
-
-        if tts:
-            tts_cog = self.bot.get_cog("TTS")
-            if tts_cog:
-                await tts_cog.speak(message.guild, f"{row['content']} {remain}")
-
     # ── 컷/멍 공통 로직 ───────────────────────────────────
 
     async def _do_cut_miss(
@@ -799,14 +775,6 @@ class Boss(commands.Cog):
     # ── 임의 예약 ─────────────────────────────────────────
 
     async def _cmd_schedule_custom(self, message: discord.Message, hm: tuple, content: str):
-        # 보스 이름으로 임의 예약 반려
-        boss = await self._find_boss(message.guild.id, content)
-        if boss:
-            await message.channel.send(
-                f"⚠️ **{boss['name']}** 은 보스 이름입니다. 젠 기록은 `HH:MM {boss['name']} 젠` 을 사용하세요."
-            )
-            return
-
         h, m = hm
         at = now().replace(hour=h, minute=m, second=0, microsecond=0)
         if at < now():
@@ -1053,6 +1021,15 @@ class Boss(commands.Cog):
     @check_schedules.before_loop
     async def before_check(self):
         await self.bot.wait_until_ready()
+        # 재시작 시 이미 지나간 스케줄을 조용히 notified=1 처리 — 알림 폭탄 방지
+        n = now()
+        async with get_db() as db:
+            await db.execute(
+                "UPDATE schedules SET warned_5min=1, warned_1min=1, notified=1 "
+                "WHERE bot_number=? AND notified=0 AND scheduled_at < ?",
+                (self.bn, n.isoformat()),
+            )
+            await db.commit()
 
 
 async def setup(bot: commands.Bot):
