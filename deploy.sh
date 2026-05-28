@@ -6,10 +6,10 @@ set -e
 
 BACKUP_DIR="backups"
 mkdir -p "$BACKUP_DIR"
-BACKUP_FILE="$BACKUP_DIR/bot_$(date +%Y%m%d_%H%M%S).sql"
+BACKUP_FILE="$BACKUP_DIR/bot_$(date +%Y%m%d_%H%M%S).db"
 
 echo "📦 [1/2] DB 백업 중..."
-if fly ssh console --app dodol-bot -C "sqlite3 /app/data/bot.db .dump" > "$BACKUP_FILE" 2>/dev/null; then
+if fly sftp get --app dodol-bot /app/data/bot.db "$BACKUP_FILE" 2>/dev/null; then
     SIZE=$(wc -c < "$BACKUP_FILE")
     echo "✅ 백업 완료: $BACKUP_FILE (${SIZE} bytes)"
 else
