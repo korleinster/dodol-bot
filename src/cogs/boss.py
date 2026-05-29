@@ -140,12 +140,13 @@ def parse_cut_command(text: str) -> dict | None:
         query  = " ".join(parts[1:])
     elif len(parts) == 1:
         # 공백 없는 경우: 체르투바컷, ㅊㄹㅌㅂㅋ, ㅋㅊㄹㅌㅂ
+        # endswith 우선; 보스 조회 실패 시 _cmd_cut_miss에서 startswith 대안 시도 (_token 참조)
         t = parts[0]
         for kw in sorted(ALL_KW, key=len, reverse=True):
             if t != kw and t.endswith(kw):
                 action = _action(kw)
                 query  = t[:-len(kw)]
-                return {"action": action, "query": query, "time_hm": time_hm}
+                return {"action": action, "query": query, "time_hm": time_hm, "_token": t}
         for kw in ("ㅋ", "ㅁ", "ㅈ"):
             if t != kw and t.startswith(kw):
                 action = _action(kw)
@@ -622,6 +623,21 @@ class Boss(commands.Cog):
 
     async def _cmd_cut_miss(self, message: discord.Message, parsed: dict):
         candidates = await self._find_bosses(message.guild.id, parsed["query"])
+
+        # 공백 없는 단일 토큰에서 endswith로 파싱했으나 보스를 못 찾은 경우,
+        # startswith(ㅋ/ㅁ/ㅈ) 대안 파싱 시도
+        if not candidates and "_token" in parsed:
+            t = parsed["_token"]
+            for kw in ("ㅋ", "ㅁ", "ㅈ"):
+                if t != kw and t.startswith(kw):
+                    alt_action = "cut" if kw == "ㅋ" else ("miss" if kw == "ㅁ" else "spawn")
+                    alt_query = t[len(kw):]
+                    alt_candidates = await self._find_bosses(message.guild.id, alt_query)
+                    if alt_candidates:
+                        parsed = {"action": alt_action, "query": alt_query, "time_hm": parsed["time_hm"]}
+                        candidates = alt_candidates
+                        break
+
         if len(candidates) > 1:
             await self._ambiguous_reply(message.channel, candidates)
             return
