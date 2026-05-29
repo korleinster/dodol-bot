@@ -140,17 +140,16 @@ def parse_cut_command(text: str) -> dict | None:
         query  = " ".join(parts[1:])
     elif len(parts) == 1:
         # 공백 없는 경우: 체르투바컷, ㅊㄹㅌㅂㅋ, ㅋㅊㄹㅌㅂ
-        # startswith 먼저: ㅋㅋㄹㅁ → ㅋ(컷) + ㅋㄹㅁ(크루마) 같은 경우 올바르게 처리
         t = parts[0]
-        for kw in ("ㅋ", "ㅁ", "ㅈ"):
-            if t != kw and t.startswith(kw):
-                action = _action(kw)
-                query  = t[len(kw):]
-                return {"action": action, "query": query, "time_hm": time_hm}
         for kw in sorted(ALL_KW, key=len, reverse=True):
             if t != kw and t.endswith(kw):
                 action = _action(kw)
                 query  = t[:-len(kw)]
+                return {"action": action, "query": query, "time_hm": time_hm}
+        for kw in ("ㅋ", "ㅁ", "ㅈ"):
+            if t != kw and t.startswith(kw):
+                action = _action(kw)
+                query  = t[len(kw):]
                 return {"action": action, "query": query, "time_hm": time_hm}
         return None
     else:
