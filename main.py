@@ -44,6 +44,13 @@ async def run_bot(bot_number: int, token: str) -> None:
     await bot.start(token)
 
 
+async def run_bot_safe(bot_number: int, token: str) -> None:
+    try:
+        await run_bot(bot_number, token)
+    except Exception as e:
+        print(f"[도돌봇{bot_number:03d}] 오류로 종료: {e}")
+
+
 async def _notify_ready(bot: commands.Bot, bot_number: int) -> None:
     from src.db import get_db
     async with get_db() as db:
@@ -70,7 +77,7 @@ async def main() -> None:
     for n in range(1, 10):
         token = os.getenv(f"DISCORD_TOKEN_{n:03d}")
         if token:
-            tasks.append(run_bot(n, token))
+            tasks.append(run_bot_safe(n, token))
             print(f"도돌봇{n:03d} 토큰 발견 — 인스턴스 준비")
 
     if not tasks:
