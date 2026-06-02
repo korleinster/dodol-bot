@@ -441,6 +441,11 @@ class Boss(commands.Cog):
                 "DELETE FROM bosses WHERE guild_id=? AND bot_number=? AND name=?",
                 (message.guild.id, self.bn, name),
             )
+            # 관련 schedules도 함께 삭제 (고아 데이터 방지)
+            await db.execute(
+                "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=?",
+                (message.guild.id, self.bn, name),
+            )
             await db.commit()
         await message.channel.send(f"🗑️ **{name}** 삭제 완료.")
 
@@ -676,17 +681,19 @@ class Boss(commands.Cog):
                         continue
 
                 if boss["spawns_on_open"]:
-                    # 지연 있음: 오픈시간 + 지연시간 = 첫 등장
+                    # 지연 있음: 오픈시간 + 지연시간 = 첫 등장 (아직 등장 안 함 → miss_count=0)
                     delay_sec = boss["open_delay_seconds"] or 0
+                    init_miss = 0
                 else:
-                    # 지연 없음: 오픈시각에 이미 등장 → 다음 = 오픈 + 리스폰
+                    # 지연 없음: 오픈시각에 이미 등장 → 다음 = 오픈 + 리스폰 (등장을 기록 못 함 → miss_count=1)
                     delay_sec = boss["respawn_seconds"] or 0
+                    init_miss = 1
 
                 spawn_at = open_time + timedelta(seconds=delay_sec)
                 await db.execute(
                     """INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
-                       VALUES (?,?,?,?,?,1)""",
-                    (message.guild.id, self.bn, boss["name"], boss["name"], spawn_at.isoformat()),
+                       VALUES (?,?,?,?,?,?)""",
+                    (message.guild.id, self.bn, boss["name"], boss["name"], spawn_at.isoformat(), init_miss),
                 )
                 count += 1
             await db.commit()
@@ -762,7 +769,7 @@ class Boss(commands.Cog):
                     continue
 
                 h, mn = hm
-                spawn_at = now().replace(hour=h, minute=mn, second=0, microsecond=0)
+                spawn_at = now().replace(hour=h, minute=mn, microsecond=0)
                 if spawn_at <= now():
                     spawn_at += timedelta(days=1)
 
@@ -808,7 +815,7 @@ class Boss(commands.Cog):
 
     async def _cmd_schedule_custom(self, message: discord.Message, hm: tuple, content: str):
         h, m = hm
-        at = now().replace(hour=h, minute=m, second=0, microsecond=0)
+        at = now().replace(hour=h, minute=m, microsecond=0)
         if at < now():
             at += timedelta(days=1)
         async with get_db() as db:
@@ -866,7 +873,7 @@ class Boss(commands.Cog):
         async with get_db() as db:
             async with db.execute(
                 "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? "
-                "ORDER BY scheduled_at DESC LIMIT 1",
+                "ORDER BY notified ASC, scheduled_at DESC LIMIT 1",
                 (guild_id, self.bn, boss_name),
             ) as cur:
                 row = await cur.fetchone()
