@@ -26,7 +26,6 @@ def make_bot(bot_number: int) -> commands.Bot:
 
     bot = commands.Bot(command_prefix="\x00", intents=intents)
     bot.bot_number = bot_number
-    bot.tester_id = int(os.getenv("TESTER_BOT_ID", "0"))
     return bot
 
 
