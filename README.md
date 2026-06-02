@@ -1,231 +1,231 @@
-# 도돌봇 — 리니지2M 보스 알림 디스코드 봇
+# Dodol Bot — Lineage 2M Boss Alert Discord Bot
 
-리니지2M 보스 컷/멍/예약 관리, TTS 알림, 거래소 시세 검색, 날씨, 미니게임 기능을 제공하는 디스코드 봇입니다.
+A Discord bot for Lineage 2M that provides boss kill/miss/reservation management, TTS alerts, marketplace price lookup, weather, and mini-games.
 
 [![License](https://img.shields.io/badge/license-All%20Rights%20Reserved-red.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/Sponsor-EA4AAA?style=flat&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/korleinster)
 
 ---
 
-## 목차
+## Table of Contents
 
-1. [기술 스택](#기술-스택)
-2. [설치 및 실행](#설치-및-실행)
-3. [환경변수 설정](#환경변수-설정)
-4. [봇 배치 (소환)](#봇-배치-소환)
-5. [명령어 목록](#명령어-목록)
-   - [채널 설정](#채널-설정)
-   - [보스 관리](#보스-관리)
-   - [컷 / 멍 / 젠](#컷--멍--젠)
-   - [예약 관리](#예약-관리)
-   - [서버오픈](#서버오픈)
-   - [고정 일정 보스](#고정-일정-보스)
-   - [자동예약](#자동예약)
+1. [Tech Stack](#tech-stack)
+2. [Installation & Running](#installation--running)
+3. [Environment Variables](#environment-variables)
+4. [Deploying the Bot](#deploying-the-bot)
+5. [Command Reference](#command-reference)
+   - [Channel Setup](#channel-setup)
+   - [Boss Management](#boss-management)
+   - [Kill / Miss / Spawn](#kill--miss--spawn)
+   - [Reservation Management](#reservation-management)
+   - [Server Open](#server-open)
+   - [Fixed-Schedule Bosses](#fixed-schedule-bosses)
+   - [Auto-Reservation](#auto-reservation)
    - [TTS](#tts)
-   - [시세 검색](#시세-검색)
-   - [날씨](#날씨)
-   - [미니게임](#미니게임)
-   - [도움말](#도움말)
-6. [멀티 인스턴스](#멀티-인스턴스)
-7. [fly.io 배포](#flyio-배포)
-8. [프로젝트 구조](#프로젝트-구조)
+   - [Price Lookup](#price-lookup)
+   - [Weather](#weather)
+   - [Mini-Games](#mini-games)
+   - [Help](#help)
+6. [Multi-Instance](#multi-instance)
+7. [fly.io Deployment](#flyio-deployment)
+8. [Project Structure](#project-structure)
 
 ---
 
-## 기술 스택
+## Tech Stack
 
-| 항목 | 내용 |
+| Item | Details |
 |---|---|
-| 언어 | Python 3.11 |
-| 봇 프레임워크 | discord.py 2.3 |
+| Language | Python 3.11 |
+| Bot framework | discord.py 2.3 |
 | TTS | gTTS (Google TTS, `ko`) |
-| 데이터베이스 | SQLite + aiosqlite |
-| 시세 API | PLAYNC 개발자센터 (`dev-api.plaync.com/l2m/v1.0`) |
-| 날씨 API | Open-Meteo (무료, 키 불필요) |
-| 배포 | fly.io (Volume 영구 저장소 + Docker FFmpeg) |
+| Database | SQLite + aiosqlite |
+| Price API | PLAYNC Developer Center (`dev-api.plaync.com/l2m/v1.0`) |
+| Weather API | Open-Meteo (free, no key required) |
+| Deployment | fly.io (persistent Volume + Docker FFmpeg) |
 
 ---
 
-## 로컬 개발 환경
+## Local Development
 
 ```bash
-# Python 3.11 가상환경 생성
+# Create Python 3.11 virtual environment
 python3.11 -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 
-# 의존성 설치
+# Install dependencies
 pip install -r requirements.txt
 
-# 봇 실행
+# Run bot
 python main.py
 ```
 
-## 자동화 테스트
+## Automated Testing
 
-`test_bot.py` 는 별도 테스터 봇을 이용한 E2E 기능 테스트입니다.
+`test_bot.py` is an E2E functional test using a separate tester bot.
 
 ```env
-# .env 에 추가
-TESTER_TOKEN=테스터봇_토큰
-TEST_CHANNEL_ID=테스트할_채널_ID
-TESTER_BOT_ID=테스터봇_USER_ID
+# Add to .env
+TESTER_TOKEN=tester_bot_token
+TEST_CHANNEL_ID=channel_id_to_test
+TESTER_BOT_ID=tester_bot_user_id
 ```
 
 ```bash
 python test_bot.py
 ```
 
-테스터 봇은 도돌봇이 배치된 채널에 자동으로 명령어를 전송하고 응답을 검증합니다. 15개 항목 전체 통과 시 정상.
+The tester bot automatically sends commands to a channel where Dodol Bot is deployed and validates the responses. All 15 items passing means the bot is working correctly.
 
 ---
 
-## 설치 및 실행
+## Installation & Running
 
 ```bash
-# 의존성 설치
+# Install dependencies
 pip install -r requirements.txt
 
-# .env 파일 생성
+# Create .env file
 cp .env.example .env
-# .env 편집 후 토큰/API 키 입력
+# Edit .env and fill in your tokens/API keys
 
-# 실행
+# Run
 python main.py
 ```
 
-> **FFmpeg 필요** — TTS 음성 재생에 사용됩니다.  
+> **FFmpeg required** — used for TTS audio playback.  
 > macOS: `brew install ffmpeg` / Ubuntu: `apt install ffmpeg`
 
 ---
 
-## 환경변수 설정
+## Environment Variables
 
-`.env.example` 을 복사해 `.env` 로 저장 후 아래 값을 입력합니다.
+Copy `.env.example` to `.env` and fill in the values below.
 
 ```env
-# 봇 토큰 (번호별 — 없는 번호는 인스턴스 미생성)
+# Bot tokens (by number — instances not created for missing numbers)
 DISCORD_TOKEN_001=your_token_here
 #DISCORD_TOKEN_002=your_token_here
 #DISCORD_TOKEN_003=your_token_here
 
-# PLAYNC 개발자센터 API 키
+# PLAYNC Developer Center API key
 PLAYNC_API_KEY=your_api_key_here
 
-# DB 경로 (fly.io Volume 마운트 경로로 변경)
+# DB path (change to fly.io Volume mount path for deployment)
 DB_PATH=./data/bot.db
 ```
 
-봇 토큰은 [Discord Developer Portal](https://discord.com/developers/applications) 에서 발급합니다.  
-PLAYNC API 키는 [PLAYNC 개발자센터](https://developers.plaync.com) 에서 발급합니다.
+Bot tokens are issued at [Discord Developer Portal](https://discord.com/developers/applications).  
+PLAYNC API keys are issued at [PLAYNC Developer Center](https://developers.plaync.com).
 
 ---
 
-## 봇 배치 (소환)
+## Deploying the Bot
 
-봇을 처음 서버에 추가하면 모든 채널에서 `소환 도돌봇001` 명령으로 배치합니다.
+When you first add the bot to a server, deploy it with the `소환 도돌봇001` command in any channel.
 
 ```
-소환                ← 서버 내 모든 도돌봇 배치 현황 확인
-소환 도돌봇001      ← 도돌봇001을 현재 텍스트 + 음성 채널로 배치
-설정                ← 현재 이 봇의 배치 채널 확인
+소환                ← Check deployment status of all Dodol Bot instances on the server
+소환 도돌봇001      ← Deploy Dodol Bot 001 to current text + voice channel
+설정                ← Check this bot's current channel assignment
 ```
 
-- 음성 채널은 명령 입력 시 사용자가 **입장해 있는 음성방**으로 자동 설정됩니다.
-- 배치 후에는 설정된 텍스트 채널에서만 명령이 동작합니다.
+- The voice channel is automatically set to the voice room the user is **currently in** when the command is issued.
+- After deployment, commands only work in the configured text channel.
 
 ---
 
-## 명령어 목록
+## Command Reference
 
-명령어 앞에 별도 접두사 없이 바로 입력합니다.
+Commands are entered directly without any prefix.
 
-### 채널 설정
+### Channel Setup
 
-| 명령어 | 설명 |
+| Command | Description |
 |---|---|
-| `소환` | 서버 내 모든 도돌봇 배치 현황 |
-| `소환 도돌봇001` | 도돌봇001을 현재 채널로 배치 |
-| `설정` | 현재 봇의 채널 설정 확인 |
+| `소환` | View all Dodol Bot deployments on the server |
+| `소환 도돌봇001` | Deploy Dodol Bot 001 to current channel |
+| `설정` | Check current bot channel configuration |
 
 ---
 
-### 보스 관리
+### Boss Management
 
-#### 보스 목록 확인
+#### View Boss List
 ```
 보스
 보스목록
 보스리스트
 ```
 
-고정 일정 보스가 맨 위, 이후 리스폰 시간 오름차순으로 표시됩니다.  
-🔄 표시는 서버 재시작 시 스폰되는 보스로, 서버오픈 시 첫 등장 딜레이를 함께 표시합니다.
+Fixed-schedule bosses appear at the top, then sorted by respawn time ascending.  
+🔄 indicates a boss that spawns on server restart, with the first-spawn delay shown alongside.
 
-- `이름 컷` / `이름멍` 등 입력 시 **공백 유무 무관**하게 매칭됩니다 (예: `블랙릴리` ↔ `블랙 릴리`).
+- Matching works **regardless of spaces** (e.g. `블랙릴리` ↔ `블랙 릴리`).
 
-> 봇 배치 시 61개 기본 보스 + 고정 일정 보스가 자동으로 등록됩니다.  
-> 기본 보스는 `보스삭제` 로 삭제할 수 없습니다.
+> When the bot is deployed, 61 default bosses + fixed-schedule bosses are registered automatically.  
+> Default bosses cannot be deleted with `보스삭제`.
 
-#### 보스 삭제
+#### Delete a Boss
 ```
 보스삭제 체르투바
 ```
 
 ---
 
-### 컷 / 멍 / 젠
+### Kill / Miss / Spawn
 
-**컷** — 보스를 처치했을 때 입력. 처치 시각 기준으로 다음 리스폰 자동 예약.
+**Kill (컷)** — Enter when you defeat a boss. Automatically schedules the next respawn based on kill time.
 
 ```
-체르 컷               ← 지금 잡은 경우
+체르 컷               ← killed just now
 컷 체르
 체르투바 컷
 
-체르 컷 0530          ← 05:30 에 잡은 경우 (HHMM 또는 HH:MM)
+체르 컷 0530          ← killed at 05:30 (HHMM or HH:MM)
 컷 체르 0530
 05:30 체르 컷
 
-ㅊㄹ ㅋ               ← 초성(3글자 이상) + ㅋ(컷 단축키)
-ㅋ ㅊㄹ               ← 앞뒤 모두 가능
+ㅊㄹ ㅋ               ← Korean consonants (3+ chars) + ㅋ (kill shortcut)
+ㅋ ㅊㄹ               ← both orderings work
 컷 ㅊㄹ
 
-체르투바컷            ← 공백 없이 입력 가능
-ㅊㄹㅌㅂㅋ            ← 초성+ㅋ 공백 없이
-ㅋㅊㄹㅌㅂ            ← ㅋ를 앞에 붙여서
+체르투바컷            ← no spaces required
+ㅊㄹㅌㅂㅋ            ← consonants + ㅋ no spaces
+ㅋㅊㄹㅌㅂ            ← ㅋ prefix form
 ```
 
-**멍** — 보스가 스폰됐지만 처치하지 못한 경우. 직전 예약 시각 기준으로 다음 리스폰 계산.
+**Miss (멍)** — Boss spawned but was not defeated. Calculates next respawn from the previous scheduled time.
 
 ```
 체르 멍
 멍 체르
-ㅊㄹ ㅁ               ← 초성(3글자 이상) + ㅁ(멍 단축키)
-ㅁ ㅊㄹ               ← 앞뒤 모두 가능
-체르투바멍            ← 공백 없이 입력 가능
+ㅊㄹ ㅁ               ← consonants (3+ chars) + ㅁ (miss shortcut)
+ㅁ ㅊㄹ               ← both orderings work
+체르투바멍            ← no spaces required
 ㅊㄹㅌㅂㅁ
 ```
 
-**젠** — 보스가 뜬 시각을 기록. 입력 시각 기준으로 다음 리스폰 자동 예약.
+**Spawn (젠)** — Records the time a boss appeared. Automatically schedules next respawn from the input time.
 
 ```
-체르 젠               ← 지금 뜬 경우
+체르 젠               ← spawned just now
 젠 체르
-0000 체르투바 젠      ← 00:00 에 뜬 경우 (HHMM 또는 HH:MM)
-0000 체르투바 스폰    ← 스폰 키워드도 가능
-0000 체르투바         ← 키워드 생략 가능 (보스 이름이면 자동으로 젠 처리)
-체르투바 0000         ← 보스명 + 시각 순서도 가능
-체르투바젠            ← 공백 없이 입력 가능
-ㅊㄹ ㅈ               ← 초성 + ㅈ(젠 단축키)
+0000 체르투바 젠      ← spawned at 00:00 (HHMM or HH:MM)
+0000 체르투바 스폰    ← 스폰 keyword also works
+0000 체르투바         ← keyword optional (auto-treated as spawn if it's a boss name)
+체르투바 0000         ← boss name + time order also works
+체르투바젠            ← no spaces required
+ㅊㄹ ㅈ               ← consonants + ㅈ (spawn shortcut)
 ```
 
-> 보스 이름만으로는 임의 예약이 불가합니다. `0000 밥 먹자` 처럼 보스 이름이 아닌 내용만 임의 예약 가능.
+> Boss name alone cannot create an arbitrary reservation. Only non-boss content (e.g. `0000 lunch`) can create arbitrary reminders.
 
 ---
 
-### 일괄 예약
+### Bulk Reservation
 
-여러 보스의 예상 젠 시각을 한 번에 입력. 메시지에 줄바꿈이 2줄 이상이면 일괄 처리 모드로 동작.
+Enter expected spawn times for multiple bosses at once. If the message contains 2 or more line breaks, it is processed in bulk mode.
 
 ```
 17:07:00 탈킨 멍
@@ -234,157 +234,157 @@ PLAYNC API 키는 [PLAYNC 개발자센터](https://developers.plaync.com) 에서
 05/28 17:36 사반 — 1시간 2분 후
 ```
 
-- `HH:MM` / `HH:MM:SS` 형식 지원 (초 무시)
-- `MM/DD HH:MM 보스명 ...` 형식 지원 — 보탐 출력 그대로 붙여넣기 가능
-- 보스명 뒤의 내용(멍/젠/`— X시간 후` 등)은 무시
-- `(미입력×N)` 표기가 있으면 miss_count에 반영
-- 고정 타임 보스는 스킵 처리
+- Supports `HH:MM` / `HH:MM:SS` formats (seconds ignored)
+- Supports `MM/DD HH:MM boss_name ...` format — paste boss tracker output directly
+- Content after the boss name (miss/spawn/`— X시간 후` etc.) is ignored
+- `(미입력×N)` notation is reflected in the miss count
+- Fixed-time bosses are skipped
 
 ---
 
-### 예약 관리
+### Reservation Management
 
-보스 출현 시각이 되면 **3단계 알림**이 자동 발송됩니다.
+When a boss's appearance time arrives, **3-stage alerts** are sent automatically.
 
-| 시점 | 색상 | 내용 |
+| Timing | Color | Content |
 |---|---|---|
-| 5분 전 | 🟡 노랑 | ⏰ 5분 후 출현 |
-| 1분 전 | 🟠 주황 | ⚠️ 1분 후 출현 |
-| 정각 | 🔴 빨강 | ⚔️ 보스 출현! + TTS + **컷/멍 버튼** |
+| 5 min before | 🟡 Yellow | ⏰ Appears in 5 minutes |
+| 1 min before | 🟠 Orange | ⚠️ Appears in 1 minute |
+| Exact time | 🔴 Red | ⚔️ Boss appeared! + TTS + **Kill/Miss buttons** |
 
-정각 알림에는 **✅ 컷 / 😶 멍** 버튼이 표시됩니다. 버튼을 누르면 바로 컷/멍 처리됩니다 (고정 타임 보스는 버튼 미표시).
+The exact-time alert shows **✅ Kill / 😶 Miss** buttons. Pressing them immediately processes the kill or miss (buttons not shown for fixed-schedule bosses).
 
 ```
-보탐 / ㅂㅌ / ㅋ / z  ← 가까운 예약 5건 (전체 건수 표시)
-보탐+ / ㅂㅌ+ / ㅋ+ / z+  ← 전체 예약 목록
+보탐 / ㅂㅌ / ㅋ / z  ← next 5 upcoming reservations (total count shown)
+보탐+ / ㅂㅌ+ / ㅋ+ / z+  ← full reservation list
 
-Z                    ← 가까운 5건 + TTS 음성 알림
+Z                    ← next 5 + TTS voice alert
 
-전체삭제              ← 고정 제외 모든 예약 삭제
-초기화                ← 위와 동일
+전체삭제              ← delete all reservations except fixed-schedule
+초기화                ← same as above
 
-22:30 체르투바        ← 22:30 에 체르투바 알림 예약 (임의 내용도 가능)
-22:30 밥 먹자         ← 22:30 에 '밥 먹자' 알림
+22:30 체르투바        ← schedule alert for 체르투바 at 22:30 (arbitrary content also works)
+22:30 밥 먹자         ← schedule "lunch" reminder at 22:30
 ```
 
-#### 자동 미입력
+#### Auto-Miss
 
-정각 알림 후 **10분(기본값)** 안에 컷/멍 입력이 없으면 자동으로 다음 리스폰 예약이 생성됩니다.  
-예약 이름 뒤에 `(미입력×N)` 이 표시되며, 컷/멍을 입력하면 사라집니다.
+If no kill/miss input is received within **10 minutes (default)** after the exact-time alert, the next respawn is automatically scheduled.  
+`(미입력×N)` is appended to the reservation name and disappears when kill/miss is entered.
 
 ---
 
-### 서버오픈
+### Server Open
 
-점검 후 서버 기동 시각 입력. 등록된 보스 전체를 리스폰 기준으로 미입력 예약.
+Enter the server restart time after maintenance. Schedules all registered bosses as auto-miss reservations based on respawn times.
 
 ```
-서버오픈 05:00     ← 05:00 오픈 기준으로 전체 보스 예약
-05:00 서버오픈     ← 동일
-오픈 05:00         ← 동일
+서버오픈 05:00     ← schedule all bosses based on 05:00 open time
+05:00 서버오픈     ← same
+오픈 05:00         ← same
 ```
 
-- 이미 예약된 보스는 스킵.
+- Bosses already scheduled are skipped.
 
 ---
 
-### 고정 일정 보스
+### Fixed-Schedule Bosses
 
-매주 정해진 요일·시각에 자동으로 알림이 발송되는 보스입니다.
+Bosses that automatically alert at a fixed day/time each week.
 
-| 보스 | 요일 | 시각 |
+| Boss | Day | Time |
 |---|---|---|
-| 타이런트 | 수 | 22:30 |
-| 셀리호든 | 금 | 19:00 |
-| 월드 보스 | 매일 | 12:00, 20:00 |
-| 오만/신념의 탑 보스 | 매일 | 19:00 |
+| 타이런트 | Wednesday | 22:30 |
+| 셀리호든 | Friday | 19:00 |
+| World Boss | Daily | 12:00, 20:00 |
+| Arrogance/Faith Tower Boss | Daily | 19:00 |
 
-- 서버 기동 시 자동으로 다음 등장 시각으로 예약됩니다.
-- 알림 발송 후 다음 등장 시각으로 자동 재예약됩니다.
-- 컷/멍 처리 및 서버오픈 예약 대상에서 **제외**됩니다.
+- Automatically scheduled for the next appearance time on server startup.
+- Automatically re-scheduled for the next time after each alert.
+- **Excluded** from kill/miss processing and server-open scheduling.
 
 ---
 
-### 자동예약
+### Auto-Reservation
 
-컷/멍 미입력 시 자동으로 예약 처리되는 유예 시간 설정 (기본 10분).
+Configure the grace period before a boss is auto-scheduled when no kill/miss is entered (default: 10 minutes).
 
 ```
-자동예약                           ← 보스별 자동예약 시간 확인
-자동예약 0:30:00 체르투바          ← 체르투바 자동예약 유예시간 30분으로 변경
+자동예약                           ← view auto-reservation time per boss
+자동예약 0:30:00 체르투바          ← set 체르투바 auto-reservation grace to 30 minutes
 ```
 
 ---
 
 ### TTS
 
-배치된 음성 채널에서 텍스트를 읽어줍니다 (gTTS, 한국어). 음성 채널에 상시 연결 유지.
+Reads text aloud in the assigned voice channel (gTTS, Korean). Maintains a permanent voice channel connection.
 
 ```
-ㅍ 좋은 아침입니다         ← 해당 텍스트를 음성 채널에서 읽어줌
-v 좋은 아침입니다          ← 위와 동일
-정신차려                   ← 봇 전체 재시작
-재시작                     ← 위와 동일
-```
-
----
-
-### 시세 검색
-
-PLAYNC 개발자센터 API를 통해 거래소 시세를 조회합니다. 서버별 최저가도 함께 표시됩니다.
-
-```
-시세 집행검                ← 아이템 검색 + 가격 통계 + 서버별 최저가
+ㅍ 좋은 아침입니다         ← reads the text in the voice channel
+v 좋은 아침입니다          ← same
+정신차려                   ← full bot restart
+재시작                     ← same
 ```
 
 ---
 
-### 날씨
+### Price Lookup
 
-3일치 날씨를 표시합니다 (Open-Meteo API).
-
-```
-날씨                       ← 오늘 / 내일 / 모레 날씨 + 강수확률
-```
-
----
-
-### 미니게임
+Queries marketplace prices via the PLAYNC Developer Center API. Also shows the lowest price per server.
 
 ```
-주사위                     ← 1~6 주사위
-주사위 100                 ← 1~100 주사위
-동전                       ← 앞면/뒷면
-
-숫자게임시작               ← 1~100 숫자 맞추기 시작
-숫자맞추기 42              ← 숫자 입력
-
-뽑기                       ← 참여자 중 1명 추첨
-뽑기3                      ← 참여자 중 3명 추첨
-뽑기 철수 영희 민수        ← 지정 인원 중 추첨
-
-경마                       ← 2마리 경마 (기본)
-경마 철수 영희             ← 이름 지정 2마리
-경마 A B C D               ← 이름 지정 4마리 (최대 8마리)
-
-랭킹                       ← 미니게임 점수 TOP 10
+시세 집행검                ← item search + price stats + lowest price per server
 ```
 
 ---
 
-### 도움말
+### Weather
+
+Shows 3-day weather (Open-Meteo API).
 
 ```
-메뉴                       ← 섹션별 명령어 안내 (8개 embed 순서대로 표시)
-도움말                     ← 위와 동일
-?                          ← 위와 동일
+날씨                       ← today / tomorrow / day after tomorrow + precipitation probability
 ```
 
 ---
 
-## 멀티 인스턴스
+### Mini-Games
 
-하나의 서비스에서 여러 봇을 동시에 운용할 수 있습니다.
+```
+주사위                     ← roll 1–6
+주사위 100                 ← roll 1–100
+동전                       ← heads/tails
+
+숫자게임시작               ← start 1–100 number guessing game
+숫자맞추기 42              ← guess a number
+
+뽑기                       ← pick 1 random participant
+뽑기3                      ← pick 3 random participants
+뽑기 철수 영희 민수        ← pick from specified names
+
+경마                       ← 2-horse race (default)
+경마 철수 영희             ← 2 named horses
+경마 A B C D               ← up to 8 named horses
+
+랭킹                       ← mini-game score TOP 10
+```
+
+---
+
+### Help
+
+```
+메뉴                       ← command guide by section (8 embeds in order)
+도움말                     ← same
+?                          ← same
+```
+
+---
+
+## Multi-Instance
+
+Multiple bots can run simultaneously from a single service.
 
 ```env
 DISCORD_TOKEN_001=token_for_bot_001
@@ -392,96 +392,96 @@ DISCORD_TOKEN_002=token_for_bot_002
 DISCORD_TOKEN_003=token_for_bot_003
 ```
 
-- 토큰이 설정된 번호만 자동으로 인스턴스가 생성됩니다.
-- 각 봇은 서버별로 독립된 채널/보스/예약 데이터를 가집니다.
-- 같은 서버에 여러 봇을 운용하면 채널별로 분리 관리 가능합니다.
+- Instances are created only for token numbers that are set.
+- Each bot has independent channel/boss/reservation data per server.
+- Running multiple bots on the same server allows management separated by channel.
 
 ---
 
-## fly.io 배포
+## fly.io Deployment
 
-### 최초 배포
+### Initial Deployment
 
 ```bash
-# flyctl 설치
+# Install flyctl
 brew install flyctl
 
-# 로그인
+# Log in
 fly auth login
 
-# 앱 생성
+# Create app
 fly apps create dodol-bot
 
-# Volume 생성 (DB 영구 저장)
+# Create Volume (persistent DB storage)
 fly volumes create dodolbot_data --region nrt --size 1 --app dodol-bot --yes
 
-# 시크릿 설정
+# Set secrets
 fly secrets set DISCORD_TOKEN_001=your_token PLAYNC_API_KEY=your_key --app dodol-bot
 
-# 배포
+# Deploy
 fly deploy --app dodol-bot
 ```
 
-배포 후 Discord에서 `소환 도돌봇001` 을 입력해 채널을 등록합니다.
+After deployment, enter `소환 도돌봇001` in Discord to register the channel.
 
-### 코드 업데이트
+### Update Code
 
 ```bash
 fly deploy --app dodol-bot
 ```
 
-### 환경변수
+### Environment Variables
 
-| 변수 | 설명 |
+| Variable | Description |
 |---|---|
-| `DISCORD_TOKEN_001` | 봇 토큰 |
-| `PLAYNC_API_KEY` | PLAYNC 개발자센터 API 키 |
-| `DB_PATH` | `/app/data/bot.db` (fly.toml에 기본 설정) |
+| `DISCORD_TOKEN_001` | Bot token |
+| `PLAYNC_API_KEY` | PLAYNC Developer Center API key |
+| `DB_PATH` | `/app/data/bot.db` (default in fly.toml) |
 
-> fly.io Tokyo(nrt) 리전 기준, KST(UTC+9) 시간으로 동작합니다.
+> fly.io Tokyo (nrt) region — operates on KST (UTC+9).
 
 ---
 
-## 프로젝트 구조
+## Project Structure
 
 ```
 DiscordBot/
-├── main.py                  # 진입점 — 멀티 인스턴스 실행
+├── main.py                  # Entry point — multi-instance runner
 ├── requirements.txt
-├── Dockerfile               # fly.io 빌드 (Python 3.11 + FFmpeg)
-├── fly.toml                 # fly.io 앱 설정 + Volume 마운트
+├── Dockerfile               # fly.io build (Python 3.11 + FFmpeg)
+├── fly.toml                 # fly.io app config + Volume mount
 ├── .env.example
 ├── .gitignore
 ├── LICENSE
 ├── data/
-│   └── bot.db               # SQLite DB (fly.io Volume 마운트)
+│   └── bot.db               # SQLite DB (fly.io Volume mount)
 └── src/
-    ├── db.py                # DB 초기화 / 연결 / 기본 보스 목록
-    ├── korean.py            # 초성 검색, 부분 매칭
+    ├── db.py                # DB init / connection / default boss list
+    ├── korean.py            # Korean consonant search, partial matching
     └── cogs/
-        ├── setup.py         # 소환, 채널 설정
-        ├── boss.py          # 보스 관리/컷/멍/예약/서버오픈/고정일정
-        ├── tts.py           # TTS + 봇 재시작
-        ├── market.py        # PLAYNC 시세 API
-        ├── minigame.py      # 미니게임, 뽑기, 경마
-        ├── weather.py       # 날씨 (Open-Meteo)
-        └── help.py          # 도움말 (섹션별 embed)
+        ├── setup.py         # Deploy, channel setup
+        ├── boss.py          # Boss management / kill / miss / reservations / server-open / fixed-schedule
+        ├── tts.py           # TTS + bot restart
+        ├── market.py        # PLAYNC price API
+        ├── minigame.py      # Mini-games, random draw, horse race
+        ├── weather.py       # Weather (Open-Meteo)
+        └── help.py          # Help (section embeds)
 ```
 
 ---
 
-## 상세 명세
+## Documentation
 
-| 문서 | 내용 |
+| Doc | Content |
 |---|---|
-| [docs/db-schema.md](docs/db-schema.md) | DB 테이블 구조 및 컬럼 설명 |
-| [docs/boss-data.md](docs/boss-data.md) | 기본 보스 전체 목록 및 데이터 기준 |
-| [docs/notification-logic.md](docs/notification-logic.md) | 알림 타이밍, 자동 재예약, 자동 미입력 흐름 |
-| [docs/error-cases.md](docs/error-cases.md) | 예외 상황별 봇 동작 |
-| [docs/test-spec.md](docs/test-spec.md) | E2E 테스트 15개 항목 및 검증 기준 |
+| [docs/db-schema.md](docs/db-schema.md) | DB table structure and column descriptions |
+| [docs/boss-data.md](docs/boss-data.md) | Full default boss list and data reference |
+| [docs/notification-logic.md](docs/notification-logic.md) | Alert timing, auto re-scheduling, auto-miss flow |
+| [docs/error-cases.md](docs/error-cases.md) | Bot behavior for edge cases |
+| [docs/test-spec.md](docs/test-spec.md) | 15 E2E test items and validation criteria |
 
 ---
 
-## 저작권
+## Copyright
 
 Copyright (c) 2025 [korleinster](https://github.com/korleinster) — All Rights Reserved.
