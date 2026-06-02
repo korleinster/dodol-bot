@@ -60,25 +60,6 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Automated Testing
-
-`test_bot.py` is an E2E functional test using a separate tester bot.
-
-```env
-# Add to .env
-TESTER_TOKEN=tester_bot_token
-TEST_CHANNEL_ID=channel_id_to_test
-TESTER_BOT_ID=tester_bot_user_id
-```
-
-```bash
-python test_bot.py
-```
-
-The tester bot automatically sends commands to a channel where Dodol Bot is deployed and validates the responses. All 15 items passing means the bot is working correctly.
-
----
-
 ## Installation & Running
 
 ```bash
@@ -478,7 +459,6 @@ DiscordBot/
 | [docs/boss-data.md](docs/boss-data.md) | Full default boss list and data reference |
 | [docs/notification-logic.md](docs/notification-logic.md) | Alert timing, auto re-scheduling, auto-miss flow |
 | [docs/error-cases.md](docs/error-cases.md) | Bot behavior for edge cases |
-| [docs/test-spec.md](docs/test-spec.md) | 15 E2E test items and validation criteria |
 
 ---
 
