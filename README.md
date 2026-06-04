@@ -241,12 +241,22 @@ The exact-time alert shows **✅ Kill / 😶 Miss** buttons. Pressing them immed
 
 Z                    ← next 5 + TTS voice alert
 
-전체삭제              ← delete all reservations except fixed-schedule
+전체삭제              ← show contributor ranking, then reset reservations + contribution records
 초기화                ← same as above
+
+기여자                ← show current cut contributor ranking
+보탐러                ← same as above
 
 22:30 체르투바        ← schedule alert for 체르투바 at 22:30 (arbitrary content also works)
 22:30 밥 먹자         ← schedule "lunch" reminder at 22:30
 ```
+
+#### Kill Contributor Tracking
+
+Every cut (via text command or button) records the user.  
+- Kill embed shows `처리자: username` in the footer  
+- `기여자` / `보탐러`: shows ranked leaderboard up to current reset  
+- `초기화`: displays final ranking, then wipes all records
 
 #### Auto-Miss
 

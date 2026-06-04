@@ -87,6 +87,25 @@ INSERT (notified=0, warned_5min=0, warned_1min=0)
 
 ---
 
+## contributions
+
+컷 처리자 기여 기록. `초기화` 명령 시 schedules와 함께 삭제됨.
+
+| 컬럼 | 타입 | 설명 |
+|---|---|---|
+| `id` | INTEGER | PK (자동 증가) |
+| `guild_id` | INTEGER | 소속 서버 ID |
+| `bot_number` | INTEGER | 소속 봇 번호 |
+| `user_id` | INTEGER | Discord 유저 ID |
+| `username` | TEXT | 처리 시점의 표시 이름 (닉네임 변경 대비) |
+| `boss_name` | TEXT | 컷 처리한 보스 이름 |
+| `cut_at` | TEXT | 컷 처리 시각 (ISO 8601, KST) |
+
+- 텍스트 명령(`체르 컷`) 및 버튼(`✅ 컷`) 모두 기록됨
+- 시즌/기간 구분 없음 — 초기화 전까지 누적
+
+---
+
 ## 테이블 간 관계
 
 ```
@@ -95,6 +114,7 @@ guild_config (guild_id, bot_number)
 bosses (guild_id, bot_number, name)
     ↑ boss_name 참조 (외래키 제약 없음)
 schedules (guild_id, bot_number, boss_name)
+contributions (guild_id, bot_number)
 ```
 
 - 외래키 제약은 설정되지 않음 — 보스 삭제 시 관련 예약은 자동 삭제되지 않음
