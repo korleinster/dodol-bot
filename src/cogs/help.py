@@ -59,8 +59,12 @@ def _build_embeds(bn: int) -> list[discord.Embed]:
         "`Z` — 가까운 5건 + TTS"
     ), inline=False)
     e.add_field(name="초기화 / 임의 예약", value=(
-        "`전체삭제` / `초기화` — 고정 제외 전체 삭제\n"
+        "`전체삭제` / `초기화` — 기여 랭킹 출력 후 고정 제외 전체 삭제\n"
         "`22:30 체르투바` — 임의 시각 예약"
+    ), inline=False)
+    e.add_field(name="🏆 컷 기여 랭킹", value=(
+        "`기여자` / `보탐러` — 초기화 전까지 누적된 컷 기여 랭킹\n"
+        "컷 처리 시 처리자 이름이 자동 기록됨 (명령어·버튼 모두)"
     ), inline=False)
     e.add_field(name="3단계 자동 알림", value=(
         "🟡 5분 전 → 🟠 1분 전 → 🔴 정각 (컷/멍 버튼)\n"
