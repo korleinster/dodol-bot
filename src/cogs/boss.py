@@ -223,7 +223,7 @@ class Boss(commands.Cog):
         await interaction.response.edit_message(
             view=BossActionView(guild_id, boss_name, disabled=True)
         )
-        result = await self._do_cut_miss(guild_id, boss_name, action)
+        result = await self._do_cut_miss(guild_id, boss_name, action, user=interaction.user)
         channel = interaction.channel
         if isinstance(result, str):
             await channel.send(result)
@@ -288,6 +288,11 @@ class Boss(commands.Cog):
         # 예약 전체 초기화
         if head in ("전체삭제", "초기화", "보스전체삭제"):
             await self._cmd_botam_reset(message)
+            return
+
+        # 기여 랭킹
+        if head in ("기여자", "보탐러", "기여랭킹") and len(parts) == 1:
+            await self._cmd_contributions(message)
             return
 
         # ㅋ/ㅋ+ (보탐 단축) — 단독 입력 시만
@@ -542,20 +547,71 @@ class Boss(commands.Cog):
     # ── .보탐 초기화 ──────────────────────────────────────
 
     async def _cmd_botam_reset(self, message: discord.Message):
+        # 초기화 전 기여 랭킹 출력
+        ranking_embed = await self._build_contributions_embed(message.guild.id)
+        if ranking_embed:
+            await message.channel.send(embed=ranking_embed)
+
         async with get_db() as db:
             await db.execute(
                 "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND is_fixed=0",
                 (message.guild.id, self.bn),
             )
+            await db.execute(
+                "DELETE FROM contributions WHERE guild_id=? AND bot_number=?",
+                (message.guild.id, self.bn),
+            )
             await db.commit()
-        await message.channel.send("🗑️ 고정 제외 예약이 모두 초기화되었습니다.")
+        await message.channel.send("🗑️ 고정 제외 예약 및 기여 기록이 초기화되었습니다.")
+
+    # ── 기여 랭킹 ─────────────────────────────────────────
+
+    async def _build_contributions_embed(self, guild_id: int) -> discord.Embed | None:
+        """기여 랭킹 embed 생성. 기록 없으면 None 반환."""
+        async with get_db() as db:
+            async with db.execute(
+                """SELECT user_id, username, COUNT(*) as cnt
+                   FROM contributions
+                   WHERE guild_id=? AND bot_number=?
+                   GROUP BY user_id
+                   ORDER BY cnt DESC""",
+                (guild_id, self.bn),
+            ) as cur:
+                rows = [dict(r) async for r in cur]
+
+        if not rows:
+            return None
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for i, r in enumerate(rows):
+            medal = medals[i] if i < 3 else "   "
+            lines.append(f"{medal} **{r['username']}**  ⚔️ {r['cnt']}컷")
+
+        total_cuts = sum(r["cnt"] for r in rows)
+        embed = discord.Embed(
+            title="🏆 컷 기여 랭킹",
+            description="\n".join(lines),
+            color=0xF1C40F,
+        )
+        embed.set_footer(text=f"총 {total_cuts}컷  |  참여자 {len(rows)}명")
+        return embed
+
+    async def _cmd_contributions(self, message: discord.Message):
+        embed = await self._build_contributions_embed(message.guild.id)
+        if embed is None:
+            await message.channel.send("아직 기록된 컷이 없습니다.")
+            return
+        await message.channel.send(embed=embed)
 
     # ── z/ㅋ (다음 예약) ──────────────────────────────────
 
     # ── 컷/멍 공통 로직 ───────────────────────────────────
 
     async def _do_cut_miss(
-        self, guild_id: int, query: str, action: str, time_hm: tuple | None = None
+        self, guild_id: int, query: str, action: str,
+        time_hm: tuple | None = None,
+        user: discord.User | discord.Member | None = None,
     ) -> discord.Embed | str:
         boss = await self._find_boss(guild_id, query)
         if not boss:
@@ -609,6 +665,14 @@ class Boss(commands.Cog):
                    VALUES (?,?,?,?,?,?)""",
                 (guild_id, self.bn, boss["name"], boss["name"], spawn_at.isoformat(), miss_count),
             )
+            # 컷 처리자 기록
+            if action == "cut" and user is not None:
+                username = getattr(user, "display_name", None) or user.name
+                await db.execute(
+                    """INSERT INTO contributions (guild_id, bot_number, user_id, username, boss_name, cut_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    (guild_id, self.bn, user.id, username, boss["name"], now().isoformat()),
+                )
             await db.commit()
 
         emoji = "✅" if action == "cut" else ("🌀" if action == "spawn" else "😶")
@@ -624,6 +688,9 @@ class Boss(commands.Cog):
             embed.add_field(name="기준 시각", value=base_time.strftime("%H:%M"))
             embed.add_field(name="다음 리스폰", value=spawn_at.strftime("%m/%d %H:%M"))
             embed.add_field(name="남은 시간", value=fmt_remain(spawn_at - now()))
+        if action == "cut" and user is not None:
+            username = getattr(user, "display_name", None) or user.name
+            embed.set_footer(text=f"처리자: {username}")
         return embed
 
     async def _cmd_cut_miss(self, message: discord.Message, parsed: dict):
@@ -647,7 +714,8 @@ class Boss(commands.Cog):
             await self._ambiguous_reply(message.channel, candidates)
             return
         result = await self._do_cut_miss(
-            message.guild.id, parsed["query"], parsed["action"], parsed["time_hm"]
+            message.guild.id, parsed["query"], parsed["action"], parsed["time_hm"],
+            user=message.author,
         )
         if isinstance(result, str):
             await message.channel.send(result)

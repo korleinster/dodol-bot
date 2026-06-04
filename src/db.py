@@ -46,6 +46,16 @@ CREATE TABLE IF NOT EXISTS schedules (
     notified     INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS contributions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id     INTEGER NOT NULL,
+    bot_number   INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL,
+    username     TEXT    NOT NULL,
+    boss_name    TEXT    NOT NULL,
+    cut_at       TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
 """
 
 # 구 이름 → 신 이름 (기존 DB 마이그레이션용)
@@ -143,6 +153,8 @@ async def init_db() -> None:
             "ALTER TABLE bosses ADD COLUMN fixed_time TEXT",
             "ALTER TABLE schedules ADD COLUMN warned_5min INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE schedules ADD COLUMN warned_1min INTEGER NOT NULL DEFAULT 0",
+            # contributions 테이블: 기존 DB에 없으면 CREATE SQL이 생성함 (IF NOT EXISTS)
+            # 하위 호환 마이그레이션용 placeholder (실제 변경 없음)
         ]:
             try:
                 await db.execute(sql)
