@@ -1,6 +1,27 @@
 # Mac Mini 이전 플랜 (Fly.io → Ubuntu + Docker)
 
-> 백로그 항목. 실행 전 아래 순서대로 진행할 것.
+> 🚧 **진행 중** (2026-06-06 기준)
+
+## 완료된 항목
+
+- [x] Ubuntu 26.04 LTS 설치 (Intel AMD64)
+- [x] SSH 서버 설치 및 자동시작 설정
+- [x] Tailscale 설치 및 연결 (`100.109.220.64`)
+- [x] 절전/자동잠금 비활성화
+- [x] Docker 29.5.3 설치
+- [x] 프로젝트 클론 (`~/dodol-bot/`)
+- [x] `docker-compose.yml` 작성
+- [x] DB 이관 완료 (Fly.io → `~/dodol-bot/data/bot.db`)
+- [x] Fly.io에서 `DISCORD_TOKEN_003` 제거
+
+## 남은 항목
+
+- [ ] `.env` 토큰 정상 입력 → 봇 003 온라인 확인
+- [ ] 봇 001, 002 Fly.io에서 이전
+- [ ] systemd 서비스 등록 (재부팅 시 자동 시작)
+- [ ] Fly.io 완전 종료
+
+---
 
 ---
 
