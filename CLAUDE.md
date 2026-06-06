@@ -12,12 +12,21 @@
 
 ## 배포 방법
 
-**반드시 `deploy.sh` 사용** — DB 백업 후 배포:
+**맥미니 Ubuntu + Docker Compose 기반**  
+SSH 접속 후 아래 순서로 진행:
 
 ```bash
-./deploy.sh
+# 맥미니 SSH 접속
+ssh leinster@192.168.31.68          # 로컬
+ssh leinster@100.109.220.64         # 외부 (Tailscale)
+
+# 코드 업데이트 & 재배포
+cd ~/dodol-bot
+git pull origin main
+docker compose up -d --build
+docker compose logs -f              # 온라인 확인
 ```
 
-- 배포 전 Fly.io 볼륨의 SQLite DB를 `backups/` 폴더에 자동 백업
-- `fly deploy --app dodol-bot` 직접 실행 금지 (DB 백업 누락 위험)
-- 복구 시: `fly ssh console --app dodol-bot -C "sqlite3 /app/data/bot.db" < backups/bot_YYYYMMDD_HHMMSS.sql`
+- DB 위치: `/home/leinster/dodol-bot/data/bot.db` (Docker 볼륨 마운트)
+- 컨테이너 재빌드해도 DB 보존됨
+- 백업: `cp ~/dodol-bot/data/bot.db ~/dodol-bot/backups/bot_$(date +%Y%m%d).db`

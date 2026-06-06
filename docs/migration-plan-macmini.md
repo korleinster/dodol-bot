@@ -1,6 +1,6 @@
 # Mac Mini 이전 플랜 (Fly.io → Ubuntu + Docker)
 
-> 🚧 **진행 중** (2026-06-06 기준)
+> ✅ **이전 완료** (2026-06-06)
 
 ## 완료된 항목
 
@@ -11,13 +11,11 @@
 - [x] Docker 29.5.3 설치
 - [x] 프로젝트 클론 (`~/dodol-bot/`)
 - [x] `docker-compose.yml` 작성
-- [x] DB 이관 완료 (Fly.io → `~/dodol-bot/data/bot.db`)
-- [x] Fly.io에서 `DISCORD_TOKEN_003` 제거
+- [x] DB 이관 완료 (Fly.io → `/home/leinster/dodol-bot/data/bot.db`)
+- [x] 봇 001~004 맥미니에서 정상 운영 중
 
 ## 남은 항목
 
-- [ ] `.env` 토큰 정상 입력 → 봇 003 온라인 확인
-- [ ] 봇 001, 002 Fly.io에서 이전
 - [ ] systemd 서비스 등록 (재부팅 시 자동 시작)
 - [ ] Fly.io 완전 종료
 
@@ -54,13 +52,13 @@ sudo usermod -aG docker $USER
 ### 2. 프로젝트 클론
 
 ```bash
-git clone https://github.com/korleinster/dodol-bot.git /opt/dodol-bot
-cd /opt/dodol-bot
+git clone https://github.com/korleinster/dodol-bot.git /home/leinster/dodol-bot
+cd /home/leinster/dodol-bot
 ```
 
 ### 3. docker-compose.yml 작성
 
-`/opt/dodol-bot/docker-compose.yml` 생성:
+`/home/leinster/dodol-bot/docker-compose.yml` 생성:
 
 ```yaml
 services:
@@ -80,7 +78,7 @@ services:
 ### 4. .env 파일 생성
 
 ```bash
-# /opt/dodol-bot/.env  (git에 절대 올리지 말 것)
+# /home/leinster/dodol-bot/.env  (git에 절대 올리지 말 것)
 DISCORD_TOKEN_001=...
 DISCORD_TOKEN_002=...
 DISCORD_TOKEN_003=...
@@ -90,7 +88,7 @@ DB_PATH=./data/bot.db
 ### 5. 사전 빌드 & 테스트 (DB 없이)
 
 ```bash
-cd /opt/dodol-bot
+cd /home/leinster/dodol-bot
 docker compose build
 docker compose up --no-start   # 실행은 아직 안 함
 ```
@@ -106,7 +104,7 @@ docker compose up --no-start   # 실행은 아직 안 함
 
 ```bash
 # Mac Mini에서
-cd /opt/dodol-bot && git pull origin main
+cd /home/leinster/dodol-bot && git pull origin main
 docker compose build
 ```
 
@@ -133,14 +131,14 @@ fly sftp get /app/data/bot.db backups/bot_final_migration.db
 
 ```bash
 # 로컬 맥에서
-scp backups/bot_final_migration.db user@macmini-ip:/opt/dodol-bot/data/bot.db
+scp backups/bot_final_migration.db leinster@192.168.31.68:/home/leinster/dodol-bot/data/bot.db
 ```
 
 ### Step 5. Mac Mini에서 봇 시작
 
 ```bash
 # Mac Mini에서
-cd /opt/dodol-bot
+cd /home/leinster/dodol-bot
 docker compose up -d
 docker compose logs -f   # 001/002/003 온라인 확인
 ```
@@ -177,7 +175,7 @@ Requires=docker.service
 After=docker.service
 
 [Service]
-WorkingDirectory=/opt/dodol-bot
+WorkingDirectory=/home/leinster/dodol-bot
 ExecStart=/usr/bin/docker compose up
 ExecStop=/usr/bin/docker compose down
 Restart=always
@@ -201,7 +199,7 @@ sudo systemctl start dodol-bot
 - 정기 백업 cron 권장:
   ```bash
   # crontab -e
-  0 4 * * * cp /opt/dodol-bot/data/bot.db /opt/dodol-bot/backups/bot_$(date +\%Y\%m\%d).db
+  0 4 * * * cp /home/leinster/dodol-bot/data/bot.db /home/leinster/dodol-bot/backups/bot_$(date +\%Y\%m\%d).db
   ```
 - Mac Mini IP가 바뀌는 경우 대비해 고정 IP 또는 tailscale 설정 권장
 

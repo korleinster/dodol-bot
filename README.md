@@ -27,7 +27,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
    - [Mini-Games](#mini-games)
    - [Help](#help)
 6. [Multi-Instance](#multi-instance)
-7. [fly.io Deployment](#flyio-deployment)
+7. [Ubuntu + Docker Deployment](#ubuntu--docker-deployment)
 8. [Project Structure](#project-structure)
 
 ---
@@ -42,7 +42,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 | Database | SQLite + aiosqlite |
 | Price API | PLAYNC Developer Center (`dev-api.plaync.com/l2m/v1.0`) |
 | Weather API | Open-Meteo (free, no key required) |
-| Deployment | fly.io (persistent Volume + Docker FFmpeg) |
+| Deployment | Ubuntu 26.04 + Docker Compose (Mac Mini) |
 
 ---
 
@@ -88,11 +88,12 @@ Copy `.env.example` to `.env` and fill in the values below.
 DISCORD_TOKEN_001=your_token_here
 #DISCORD_TOKEN_002=your_token_here
 #DISCORD_TOKEN_003=your_token_here
+#DISCORD_TOKEN_004=your_token_here
 
 # PLAYNC Developer Center API key
 PLAYNC_API_KEY=your_api_key_here
 
-# DB path (change to fly.io Volume mount path for deployment)
+# DB path (Docker volume mount — no change needed)
 DB_PATH=./data/bot.db
 ```
 
@@ -381,55 +382,72 @@ Multiple bots can run simultaneously from a single service.
 DISCORD_TOKEN_001=token_for_bot_001
 DISCORD_TOKEN_002=token_for_bot_002
 DISCORD_TOKEN_003=token_for_bot_003
+DISCORD_TOKEN_004=token_for_bot_004
 ```
 
-- Instances are created only for token numbers that are set.
+- Instances are created only for token numbers that are set (001–009 supported).
 - Each bot has independent channel/boss/reservation data per server.
 - Running multiple bots on the same server allows management separated by channel.
 
 ---
 
-## fly.io Deployment
+## Ubuntu + Docker Deployment
 
-### Initial Deployment
+Running on Mac Mini (Ubuntu 26.04 LTS) via Docker Compose.
+
+### Server Info
+
+| Item | Value |
+|---|---|
+| OS | Ubuntu 26.04 LTS |
+| Local IP | `192.168.31.68` |
+| Tailscale IP | `100.109.220.64` (remote access) |
+| Project path | `/home/leinster/dodol-bot/` |
+| DB path | `/home/leinster/dodol-bot/data/bot.db` |
+
+### Initial Setup
 
 ```bash
-# Install flyctl
-brew install flyctl
+# Clone project on Mac Mini
+git clone https://github.com/korleinster/dodol-bot.git ~/dodol-bot
+cd ~/dodol-bot
 
-# Log in
-fly auth login
+# Create .env
+cp .env.example .env
+nano .env  # fill in tokens and API key
 
-# Create app
-fly apps create dodol-bot
+# Create data directory
+mkdir -p data
 
-# Create Volume (persistent DB storage)
-fly volumes create dodolbot_data --region nrt --size 1 --app dodol-bot --yes
-
-# Set secrets
-fly secrets set DISCORD_TOKEN_001=your_token PLAYNC_API_KEY=your_key --app dodol-bot
-
-# Deploy
-fly deploy --app dodol-bot
+# Build and start
+docker compose up -d --build
+docker compose logs -f  # confirm bots online
 ```
-
-After deployment, enter `소환 도돌봇001` in Discord to register the channel.
 
 ### Update Code
 
 ```bash
-fly deploy --app dodol-bot
+ssh leinster@192.168.31.68
+cd ~/dodol-bot
+git pull origin main
+docker compose up -d --build
+```
+
+### DB Backup
+
+```bash
+cp ~/dodol-bot/data/bot.db ~/dodol-bot/backups/bot_$(date +%Y%m%d).db
 ```
 
 ### Environment Variables
 
 | Variable | Description |
 |---|---|
-| `DISCORD_TOKEN_001` | Bot token |
+| `DISCORD_TOKEN_001` ~ `004` | Bot tokens |
 | `PLAYNC_API_KEY` | PLAYNC Developer Center API key |
-| `DB_PATH` | `/app/data/bot.db` (default in fly.toml) |
+| `DB_PATH` | `./data/bot.db` (Docker volume mount) |
 
-> fly.io Tokyo (nrt) region — operates on KST (UTC+9).
+> Timezone: KST (UTC+9) — configured via `timedatectl set-timezone Asia/Seoul`.
 
 ---
 
@@ -445,7 +463,7 @@ DiscordBot/
 ├── .gitignore
 ├── LICENSE
 ├── data/
-│   └── bot.db               # SQLite DB (fly.io Volume mount)
+│   └── bot.db               # SQLite DB (Docker volume mount → /home/leinster/dodol-bot/data/)
 └── src/
     ├── db.py                # DB init / connection / default boss list
     ├── korean.py            # Korean consonant search, partial matching
@@ -474,4 +492,4 @@ DiscordBot/
 
 ## Copyright
 
-Copyright (c) 2025 [korleinster](https://github.com/korleinster) — All Rights Reserved.
+Copyright (c) 2026 [korleinster](https://github.com/korleinster) — All Rights Reserved.
