@@ -29,8 +29,9 @@ def make_bot(bot_number: int) -> commands.Bot:
     return bot
 
 
-async def run_bot(bot_number: int, token: str) -> None:
-    bot = make_bot(bot_number)
+async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) -> None:
+    if bot is None:
+        bot = make_bot(bot_number)
 
     @bot.event
     async def on_ready():
@@ -44,9 +45,9 @@ async def run_bot(bot_number: int, token: str) -> None:
     await bot.start(token)
 
 
-async def run_bot_safe(bot_number: int, token: str) -> None:
+async def run_bot_safe(bot_number: int, token: str, bot: commands.Bot | None = None) -> None:
     try:
-        await run_bot(bot_number, token)
+        await run_bot(bot_number, token, bot)
     except Exception as e:
         print(f"[도돌봇{bot_number:03d}] 오류로 종료: {e}")
 
@@ -82,18 +83,38 @@ async def main() -> None:
         if not token:
             raise RuntimeError(f"DISCORD_TOKEN_{n:03d} 이 설정되지 않았습니다. .env 파일을 확인하세요.")
         print(f"도돌봇{n:03d} 토큰 발견 — 단일봇 모드로 시작")
-        await run_bot_safe(n, token)
+
+        bot = make_bot(n)
+        tasks = [run_bot_safe(n, token, bot)]
+
+        # 봇-001에서만 텔레그램 공지 리스너 실행
+        if n == 1:
+            from src.telegram_listener import run_telegram_listener
+            tasks.append(run_telegram_listener(bot))
+
+        await asyncio.gather(*tasks)
+
     else:
         # 멀티봇 모드: BOT_NUMBER 미설정 시 .env의 모든 토큰을 한 프로세스에서 실행
         tasks = []
+        first_bot: commands.Bot | None = None
+
         for n in range(1, 10):
             token = os.getenv(f"DISCORD_TOKEN_{n:03d}")
             if token:
-                tasks.append(run_bot_safe(n, token))
+                bot = make_bot(n)
+                if first_bot is None:
+                    first_bot = bot  # 첫 번째 봇에 텔레그램 리스너 연결
+                tasks.append(run_bot_safe(n, token, bot))
                 print(f"도돌봇{n:03d} 토큰 발견 — 인스턴스 준비")
 
         if not tasks:
             raise RuntimeError("DISCORD_TOKEN_001 이 설정되지 않았습니다. .env 파일을 확인하세요.")
+
+        # 텔레그램 공지 리스너 (첫 번째 봇 인스턴스 사용)
+        if first_bot is not None:
+            from src.telegram_listener import run_telegram_listener
+            tasks.append(run_telegram_listener(first_bot))
 
         await asyncio.gather(*tasks)
 
