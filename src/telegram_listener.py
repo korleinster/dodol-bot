@@ -79,5 +79,5 @@ async def run_telegram_listener(bot: commands.Bot) -> None:
             await app.bot.set_my_commands(
                 list(existing) + [BotCommand("announce", "Discord 전체 채널 공지")]
             )
-        await app.updater.start_polling()
+        await app.updater.start_polling(drop_pending_updates=True)
         await asyncio.Event().wait()  # 봇 종료 시까지 대기
