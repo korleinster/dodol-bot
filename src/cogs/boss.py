@@ -940,7 +940,7 @@ class Boss(commands.Cog):
 
     # ── 주기 체크: 알림 발송 ──────────────────────────────
 
-    @tasks.loop(seconds=5)
+    @tasks.loop(seconds=1)
     async def check_schedules(self):
         n = now()
         base = (
@@ -952,20 +952,20 @@ class Boss(commands.Cog):
         )
         # 겹치지 않는 구간으로 분리
         # 5분: (90s, 330s] — 1분 구간 위부터
-        # 1분: (60s, 90s]  — 정각 구간 위부터
-        # 정각: (0s, 60s]
+        # 1분: (2s, 90s]   — 정각 구간 위부터
+        # 정각: (0s, 2s]   — 루프 1초 기준, 창 2초 → 출현 1~2초 전 알림
         t330 = (n + timedelta(seconds=330)).isoformat()
         t90  = (n + timedelta(seconds=90)).isoformat()
-        t60  = (n + timedelta(seconds=60)).isoformat()
+        t2   = (n + timedelta(seconds=2)).isoformat()
 
         async def fetch(where: str, params: tuple) -> list[dict]:
             async with get_db() as db:
                 async with db.execute(base + where, (self.bn,) + params) as cur:
                     return [dict(r) async for r in cur]
 
-        rows_5min  = await fetch(" AND s.warned_5min=0 AND s.scheduled_at > ? AND s.scheduled_at <= ?", (t90,  t330))
-        rows_1min  = await fetch(" AND s.warned_1min=0 AND s.scheduled_at > ? AND s.scheduled_at <= ?", (t60,  t90))
-        rows_final = await fetch(" AND s.scheduled_at <= ?",                                             (t60,))
+        rows_5min  = await fetch(" AND s.warned_5min=0 AND s.scheduled_at > ? AND s.scheduled_at <= ?", (t90, t330))
+        rows_1min  = await fetch(" AND s.warned_1min=0 AND s.scheduled_at > ? AND s.scheduled_at <= ?", (t2,  t90))
+        rows_final = await fetch(" AND s.scheduled_at <= ?",                                             (t2,))
 
         # ── 5분 전 경고 ───────────────────────────────────
         for r in rows_5min:
