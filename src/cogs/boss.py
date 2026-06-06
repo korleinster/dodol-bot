@@ -592,7 +592,7 @@ class Boss(commands.Cog):
         base_time = now()
         if time_hm:
             h, m = time_hm
-            base_time = base_time.replace(hour=h, minute=m, microsecond=0)  # second는 now() 그대로 유지
+            base_time = base_time.replace(hour=h, minute=m, second=0, microsecond=0)
             # cut/miss는 "언제 잡았는지" 기준 → 미래 시각이면 어제로 보정
             # spawn(젠)은 "언제 나오는지" 기준 → 미래 시각도 그대로 사용
             if action != "spawn" and base_time > now() + timedelta(minutes=1):
@@ -803,7 +803,7 @@ class Boss(commands.Cog):
                     continue
 
                 h, mn = hm
-                spawn_at = now().replace(hour=h, minute=mn, microsecond=0)
+                spawn_at = now().replace(hour=h, minute=mn, second=0, microsecond=0)
                 if spawn_at <= now():
                     spawn_at += timedelta(days=1)
 
@@ -849,7 +849,7 @@ class Boss(commands.Cog):
 
     async def _cmd_schedule_custom(self, message: discord.Message, hm: tuple, content: str):
         h, m = hm
-        at = now().replace(hour=h, minute=m, microsecond=0)
+        at = now().replace(hour=h, minute=m, second=0, microsecond=0)
         if at < now():
             at += timedelta(days=1)
         async with get_db() as db:
@@ -1123,6 +1123,53 @@ class Boss(commands.Cog):
                 (self.bn, n.isoformat()),
             )
             await db.commit()
+
+        # 재시작 직후 자동 미입력 처리 — auto_schedule_seconds 대기 없이 즉시 실행
+        # (봇이 꺼져 있는 동안 지나간 보스들에 대해 바로 다음 예약 생성)
+        async with get_db() as db:
+            async with db.execute(
+                """SELECT s.guild_id, s.boss_name, s.scheduled_at, s.miss_count,
+                          b.respawn_seconds
+                   FROM schedules s
+                   JOIN bosses b ON s.guild_id=b.guild_id AND s.bot_number=b.bot_number AND s.boss_name=b.name
+                   WHERE s.bot_number=? AND s.notified=1 AND s.boss_name IS NOT NULL
+                     AND b.fixed=0
+                   ORDER BY s.scheduled_at DESC""",
+                (self.bn,),
+            ) as cur:
+                notified_rows = [dict(r) async for r in cur]
+
+        latest: dict[tuple, dict] = {}
+        for row in notified_rows:
+            key = (row["guild_id"], row["boss_name"])
+            if key not in latest:
+                latest[key] = row
+
+        for (guild_id, boss_name), row in latest.items():
+            if not row["respawn_seconds"]:
+                continue
+            async with get_db() as db:
+                async with db.execute(
+                    "SELECT 1 FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
+                    (guild_id, self.bn, boss_name),
+                ) as cur:
+                    if await cur.fetchone():
+                        continue
+                at = datetime.fromisoformat(row["scheduled_at"])
+                new_at   = at + timedelta(seconds=row["respawn_seconds"])
+                new_miss = row["miss_count"] + 1
+                while new_at <= n:
+                    new_at   += timedelta(seconds=row["respawn_seconds"])
+                    new_miss += 1
+                await db.execute(
+                    """INSERT INTO schedules
+                       (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
+                       VALUES (?,?,?,?,?,?)""",
+                    (guild_id, self.bn, boss_name, boss_name,
+                     new_at.isoformat(), new_miss),
+                )
+                await db.commit()
+        print(f"[도돌봇{self.bn:03d}] 재시작 복구 완료 — {len(latest)}개 보스 자동 미입력 처리 확인")
 
 
 async def setup(bot: commands.Bot):
