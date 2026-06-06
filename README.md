@@ -452,8 +452,9 @@ cp ~/dodol-bot/data/bot.db ~/dodol-bot/backups/bot_$(date +%Y%m%d).db
 DiscordBot/
 ├── main.py                  # Entry point — multi-instance runner
 ├── requirements.txt
-├── Dockerfile               # fly.io build (Python 3.11 + FFmpeg)
-├── fly.toml                 # fly.io app config + Volume mount
+├── Dockerfile               # Docker build (Python 3.11 + FFmpeg)
+├── docker-compose.yml       # Mac Mini deployment config
+├── deploy.sh                # Deployment guide script
 ├── .env.example
 ├── .gitignore
 ├── LICENSE

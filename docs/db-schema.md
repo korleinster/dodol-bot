@@ -39,7 +39,7 @@ SQLite 단일 파일 (`bot.db`). 테이블 3개.
 | `open_delay_seconds` | INTEGER | 서버오픈 후 첫 등장까지 지연(초) |
 | `auto_schedule_seconds` | INTEGER | 미입력 자동 예약 유예시간(초). 기본 600(10분) |
 | `open_time_seconds` | INTEGER | 미사용 (예약 컬럼) |
-| `is_default` | INTEGER | 기본 보스 여부. 1이면 보스삭제 불가 |
+| `is_default` | INTEGER | 기본 보스 여부 (소스 수정으로만 변경 가능) |
 
 - UNIQUE: `(guild_id, bot_number, name)`
 

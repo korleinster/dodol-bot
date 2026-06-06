@@ -31,7 +31,7 @@
 | DB | Fly.io 볼륨 `/app/data/bot.db` | 로컬 볼륨 마운트 |
 | 시크릿 | `fly secrets` | `.env` 파일 (서버 로컬) |
 | 재시작 | Fly.io 자동 | `restart: always` + systemd |
-| 봇 수 | 001~003 (현재) | 동일 |
+| 봇 수 | 001~003 | 001~004 |
 
 ---
 
