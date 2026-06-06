@@ -7,7 +7,7 @@ import os
 
 import discord
 from discord.ext import commands
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from src.db import get_db
@@ -73,5 +73,8 @@ async def run_telegram_listener(bot: commands.Bot) -> None:
     print("[텔레그램] 공지 리스너 시작")
     async with app:
         await app.start()
+        await app.bot.set_my_commands([
+            BotCommand("announce", "Discord 전체 채널 공지"),
+        ])
         await app.updater.start_polling()
         await asyncio.Event().wait()  # 봇 종료 시까지 대기
