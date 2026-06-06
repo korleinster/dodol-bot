@@ -146,12 +146,7 @@ Fixed-schedule bosses appear at the top, then sorted by respawn time ascending.
 - Matching works **regardless of spaces** (e.g. `블랙릴리` ↔ `블랙 릴리`).
 
 > When the bot is deployed, 61 default bosses + fixed-schedule bosses are registered automatically.  
-> Default bosses cannot be deleted with `보스삭제`.
-
-#### Delete a Boss
-```
-보스삭제 체르투바
-```
+> Boss list can only be modified by editing the source (`src/db.py`).
 
 ---
 

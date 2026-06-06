@@ -270,11 +270,6 @@ class Boss(commands.Cog):
             await self._cmd_boss_list(message)
             return
 
-        # 보스삭제
-        if head == "보스삭제" and len(parts) >= 2:
-            await self._cmd_boss_delete(message, " ".join(parts[1:]))
-            return
-
         # 자동예약
         if head == "자동예약":
             await self._cmd_auto_schedule(message, parts[1:])
@@ -422,37 +417,6 @@ class Boss(commands.Cog):
         )
         embed.set_footer(text=f"총 {len(rows)}개  |  🔄 서버 재시작 시 스폰")
         await message.channel.send(embed=embed)
-
-    # ── .보스삭제 ─────────────────────────────────────────
-
-    async def _cmd_boss_delete(self, message: discord.Message, name: str):
-        async with get_db() as db:
-            async with db.execute(
-                "SELECT is_default FROM bosses WHERE guild_id=? AND bot_number=? AND name=?",
-                (message.guild.id, self.bn, name),
-            ) as cur:
-                row = await cur.fetchone()
-
-        if not row:
-            await message.channel.send(f"❌ **{name}** 을(를) 찾을 수 없습니다.")
-            return
-
-        if row["is_default"]:
-            await message.channel.send(f"🔒 **{name}** 은 기본 보스로 삭제할 수 없습니다.")
-            return
-
-        async with get_db() as db:
-            await db.execute(
-                "DELETE FROM bosses WHERE guild_id=? AND bot_number=? AND name=?",
-                (message.guild.id, self.bn, name),
-            )
-            # 관련 schedules도 함께 삭제 (고아 데이터 방지)
-            await db.execute(
-                "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=?",
-                (message.guild.id, self.bn, name),
-            )
-            await db.commit()
-        await message.channel.send(f"🗑️ **{name}** 삭제 완료.")
 
     # ── .자동예약 ─────────────────────────────────────────
 
