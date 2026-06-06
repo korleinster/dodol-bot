@@ -238,9 +238,9 @@ class Boss(commands.Cog):
         if not content:
             return
 
-        # 소환된 채널에서만 동작
+        # 소환된 채널에서만 동작 (미배치 봇은 침묵)
         assigned = await self.get_text_channel(message.guild.id)
-        if assigned and message.channel.id != assigned:
+        if not assigned or message.channel.id != assigned:
             return
 
         cmd = content

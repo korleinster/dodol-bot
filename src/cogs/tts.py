@@ -129,7 +129,7 @@ class TTS(commands.Cog):
             return
 
         assigned = await self.get_text_channel(message.guild.id)
-        if assigned and message.channel.id != assigned:
+        if not assigned or message.channel.id != assigned:
             return
 
         cmd = content
