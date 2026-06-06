@@ -34,7 +34,8 @@ async def run_bot(bot_number: int, token: str) -> None:
 
     @bot.event
     async def on_ready():
-        print(f"[도돌봇{bot_number:03d}] {bot.user} 온라인")
+        commit = os.getenv("GIT_COMMIT", "unknown")
+        print(f"[도돌봇{bot_number:03d}] {bot.user} 온라인 (commit: {commit})")
         await _notify_ready(bot, bot_number)
 
     for cog in COGS:

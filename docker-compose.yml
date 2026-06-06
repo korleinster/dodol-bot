@@ -1,6 +1,9 @@
 services:
   dodol-bot-001:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: dodol-bot:latest
     restart: always
     env_file: .env

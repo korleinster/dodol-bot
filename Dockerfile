@@ -8,4 +8,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# 빌드 시 git 커밋 해시 주입 (docker compose build --build-arg GIT_COMMIT=... 또는 자동 전달)
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=$GIT_COMMIT
+
 CMD ["python", "-u", "main.py"]

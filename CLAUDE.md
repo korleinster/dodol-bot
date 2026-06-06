@@ -26,17 +26,24 @@ git pull origin main
 
 **전체 재배포** (코드 대규모 변경 시):
 ```bash
+export GIT_COMMIT=$(git rev-parse --short HEAD)
 docker compose build
 docker compose up -d
 ```
 
 **순차 배포** (봇별 롤링 업데이트, 영향 최소화):
 ```bash
+export GIT_COMMIT=$(git rev-parse --short HEAD)
 docker compose build
 docker compose up -d --no-deps dodol-bot-001
 docker compose up -d --no-deps dodol-bot-002
 docker compose up -d --no-deps dodol-bot-003
 docker compose up -d --no-deps dodol-bot-004
+```
+
+**버전 확인** (각 컨테이너 배포 커밋 해시):
+```bash
+docker compose logs --tail=5 | grep "commit:"
 ```
 
 **특정 봇만 재시작**:

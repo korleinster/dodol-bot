@@ -428,12 +428,15 @@ Each bot runs in its own container — updates can be applied bot-by-bot without
 ssh leinster@192.168.31.68
 cd ~/dodol-bot
 git pull origin main
+export GIT_COMMIT=$(git rev-parse --short HEAD)
 docker compose build
 docker compose up -d
 ```
 
 **Rolling deploy** (sequential per-bot restart, minimum disruption):
 ```bash
+git pull origin main
+export GIT_COMMIT=$(git rev-parse --short HEAD)
 docker compose build
 docker compose up -d --no-deps dodol-bot-001
 docker compose up -d --no-deps dodol-bot-002
@@ -449,6 +452,11 @@ docker compose restart dodol-bot-003
 **Add a new bot** (after adding service to docker-compose.yml):
 ```bash
 docker compose up -d --no-deps dodol-bot-005
+```
+
+**Check deployed version** (shows git commit hash per container):
+```bash
+docker compose logs --tail=5 | grep "commit:"
 ```
 
 ### DB Backup
