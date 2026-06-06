@@ -461,8 +461,17 @@ docker compose logs --tail=5 | grep "commit:"
 
 ### DB Backup
 
+Automated daily backup via `backup.sh` (runs at 04:00 KST via cron):
+- Copies `bot.db` to `backups/` locally (retained 30 days)
+- Uploads to Google Drive `dodol-bot-backups/` folder (retained 7 days)
+- Requires rclone configured with `gdrive:` remote
+
 ```bash
-cp ~/dodol-bot/data/bot.db ~/dodol-bot/backups/bot_$(date +%Y%m%d).db
+# Manual backup
+~/dodol-bot/backup.sh
+
+# Check backup log
+tail -20 ~/dodol-bot/backups/backup.log
 ```
 
 ### Environment Variables
@@ -486,6 +495,7 @@ DiscordBot/
 ├── Dockerfile               # Docker build (Python 3.11 + FFmpeg)
 ├── docker-compose.yml       # Mac Mini deployment config
 ├── deploy.sh                # Deployment guide script
+├── backup.sh                # DB backup → Google Drive (cron daily 04:00)
 ├── .env.example
 ├── .gitignore
 ├── LICENSE

@@ -63,4 +63,5 @@ docker compose logs -f dodol-bot-003
 
 - DB 위치: `/home/leinster/dodol-bot/data/bot.db` (Docker 볼륨 마운트, 공유)
 - 컨테이너 재빌드해도 DB 보존됨
-- 백업: `cp ~/dodol-bot/data/bot.db ~/dodol-bot/backups/bot_$(date +%Y%m%d).db`
+- 자동 백업: 매일 04:00 KST `backup.sh` cron 실행 → Google Drive `dodol-bot-backups/` (7일 보관)
+- 수동 백업: `~/dodol-bot/backup.sh`

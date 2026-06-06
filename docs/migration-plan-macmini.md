@@ -14,10 +14,17 @@
 - [x] DB 이관 완료 (Fly.io → `/home/leinster/dodol-bot/data/bot.db`)
 - [x] 봇 001~004 맥미니에서 정상 운영 중
 
+## 완료된 항목 (추가)
+
+- [x] systemd 서비스 등록 (`dodol-bot.service` — 재부팅 시 자동 시작)
+- [x] Fly.io 완전 종료 (앱 삭제 확인)
+- [x] DB 자동 백업 → Google Drive (매일 04:00 KST, 7일 보관)
+- [x] 봇별 독립 컨테이너 구조 전환 (dodol-bot-001~004)
+- [x] 봇 004 추가
+
 ## 남은 항목
 
-- [ ] systemd 서비스 등록 (재부팅 시 자동 시작)
-- [ ] Fly.io 완전 종료
+없음 — 이전 완료
 
 ---
 
