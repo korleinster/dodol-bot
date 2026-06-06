@@ -940,7 +940,7 @@ class Boss(commands.Cog):
 
     # ── 주기 체크: 알림 발송 ──────────────────────────────
 
-    @tasks.loop(seconds=30)
+    @tasks.loop(seconds=5)
     async def check_schedules(self):
         n = now()
         base = (
