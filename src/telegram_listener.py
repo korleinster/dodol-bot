@@ -60,7 +60,7 @@ async def run_telegram_listener(bot: commands.Bot) -> None:
         text = " ".join(context.args).strip() if context.args else ""
         if not text:
             await update.message.reply_text(
-                "❌ 내용을 입력해주세요.\n예: /공지 서버 점검이 예정되어 있습니다"
+                "❌ 내용을 입력해주세요.\n예: /announce 서버 점검이 예정되어 있습니다"
             )
             return
 
@@ -68,7 +68,7 @@ async def run_telegram_listener(bot: commands.Bot) -> None:
         sent = await _broadcast(bot, text)
         await update.message.reply_text(f"✅ {sent}개 채널에 공지 발송 완료")
 
-    app.add_handler(CommandHandler("공지", cmd_announce))
+    app.add_handler(CommandHandler("announce", cmd_announce))
 
     print("[텔레그램] 공지 리스너 시작")
     async with app:
