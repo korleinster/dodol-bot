@@ -598,6 +598,7 @@ class Boss(commands.Cog):
             if action != "spawn" and base_time > now() + timedelta(minutes=1):
                 base_time -= timedelta(days=1)
 
+        n = now()
         if action == "cut":
             spawn_at   = base_time + timedelta(seconds=boss["respawn_seconds"] or 0)
             miss_count = 0
@@ -608,6 +609,8 @@ class Boss(commands.Cog):
             miss_count = 0
             label      = "젠"
         else:
+            # 멍: 이미 알림 발송된(notified=1) 예약 기준으로 다음 리스폰 계산
+            # (notified=0인 자동 미입력 예약 기준으로 삼으면 2사이클 연산되는 오류 방지)
             prev = await self._get_last_schedule(guild_id, boss["name"])
             if prev:
                 base_time = datetime.fromisoformat(prev["scheduled_at"])
@@ -617,7 +620,7 @@ class Boss(commands.Cog):
 
         # 계산된 시각이 과거면 리스폰 단위로 다음 미래 출현 시각으로 전진
         if boss["respawn_seconds"]:
-            while spawn_at <= now():
+            while spawn_at <= n:
                 spawn_at   += timedelta(seconds=boss["respawn_seconds"])
                 miss_count += (1 if action not in ("cut", "spawn") else 0)
 
@@ -695,7 +698,12 @@ class Boss(commands.Cog):
         if not hm:
             return
         h, m = hm
-        open_time = now().replace(hour=h, minute=m, second=0, microsecond=0)
+        n = now()
+        open_time = n.replace(hour=h, minute=m, second=0, microsecond=0)
+        # 오픈 시각이 현재보다 미래(1시간 초과)이면 어제로 처리 (실수 입력 방지)
+        if open_time > n + timedelta(hours=1):
+            open_time -= timedelta(days=1)
+
         async with get_db() as db:
             async with db.execute(
                 "SELECT * FROM bosses WHERE guild_id=? AND bot_number=? AND fixed=0",
@@ -704,6 +712,7 @@ class Boss(commands.Cog):
                 bosses = [dict(r) async for r in cur]
 
         count = 0
+        past_count = 0
         async with get_db() as db:
             for boss in bosses:
                 # 이미 예약된 보스 스킵
@@ -724,6 +733,14 @@ class Boss(commands.Cog):
                     init_miss = 1
 
                 spawn_at = open_time + timedelta(seconds=delay_sec)
+
+                # 계산된 시각이 과거면 리스폰 단위로 미래로 전진 (늦은 오픈 입력 시 알림 폭탄 방지)
+                if boss["respawn_seconds"]:
+                    while spawn_at <= n:
+                        spawn_at  += timedelta(seconds=boss["respawn_seconds"])
+                        init_miss += 1
+                        past_count += 1  # 몇 번 전진했는지 추적 (로그용)
+
                 await db.execute(
                     """INSERT INTO schedules (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
                        VALUES (?,?,?,?,?,?)""",
@@ -732,7 +749,10 @@ class Boss(commands.Cog):
                 count += 1
             await db.commit()
 
-        await message.channel.send(f"✅ 서버오픈 {h:02d}:{m:02d} 기준으로 **{count}개** 보스 미입력 예약 완료.")
+        lag_notice = f" (오픈 후 입력 지연 — 일부 보스 미입력 자동 누적)" if past_count > 0 else ""
+        await message.channel.send(
+            f"✅ 서버오픈 {h:02d}:{m:02d} 기준으로 **{count}개** 보스 미입력 예약 완료.{lag_notice}"
+        )
 
     # ── 일괄 예약 ─────────────────────────────────────────
 
@@ -904,10 +924,15 @@ class Boss(commands.Cog):
         await channel.send(embed=embed)
 
     async def _get_last_schedule(self, guild_id: int, boss_name: str) -> dict | None:
+        """멍 처리의 기준이 되는 가장 최근 예약 반환.
+        우선순위: 알림 발송 완료(notified=1) 중 가장 최신 → 없으면 미발송(notified=0) 중 가장 최신.
+        notified=1 우선인 이유: 자동 미입력으로 생성된 다음 예약(notified=0)을 기준으로 삼으면
+        멍 처리 시 2사이클 후 시각으로 계산되는 오류 방지.
+        """
         async with get_db() as db:
             async with db.execute(
                 "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? "
-                "ORDER BY notified ASC, scheduled_at DESC LIMIT 1",
+                "ORDER BY notified DESC, scheduled_at DESC LIMIT 1",
                 (guild_id, self.bn, boss_name),
             ) as cur:
                 row = await cur.fetchone()
