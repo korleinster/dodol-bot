@@ -145,6 +145,9 @@ DEFAULT_BOSSES: list[tuple] = [
 async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
+        # 다중 프로세스(컨테이너별 봇) 동시 접근을 위해 WAL 모드 활성화
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=5000")
         await db.executescript(_CREATE_SQL)
         # 컬럼 마이그레이션 (이미 존재하면 무시)
         for sql in [
@@ -220,4 +223,5 @@ async def ensure_default_bosses(guild_id: int, bot_number: int) -> None:
 async def get_db():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA busy_timeout=5000")
         yield db

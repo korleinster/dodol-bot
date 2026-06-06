@@ -1,8 +1,53 @@
 services:
-  dodol-bot:
+  dodol-bot-001:
     build: .
+    image: dodol-bot:latest
     restart: always
     env_file: .env
+    environment:
+      - BOT_NUMBER=1
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  dodol-bot-002:
+    image: dodol-bot:latest
+    restart: always
+    env_file: .env
+    environment:
+      - BOT_NUMBER=2
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  dodol-bot-003:
+    image: dodol-bot:latest
+    restart: always
+    env_file: .env
+    environment:
+      - BOT_NUMBER=3
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  dodol-bot-004:
+    image: dodol-bot:latest
+    restart: always
+    env_file: .env
+    environment:
+      - BOT_NUMBER=4
     volumes:
       - ./data:/app/data
     logging:

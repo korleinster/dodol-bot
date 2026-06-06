@@ -72,17 +72,29 @@ async def _notify_ready(bot: commands.Bot, bot_number: int) -> None:
 async def main() -> None:
     await init_db()
 
-    tasks = []
-    for n in range(1, 10):
+    bot_number_env = os.getenv("BOT_NUMBER")
+
+    if bot_number_env:
+        # 단일봇 모드: BOT_NUMBER 환경변수로 특정 봇만 실행 (컨테이너 분리 배포용)
+        n = int(bot_number_env)
         token = os.getenv(f"DISCORD_TOKEN_{n:03d}")
-        if token:
-            tasks.append(run_bot_safe(n, token))
-            print(f"도돌봇{n:03d} 토큰 발견 — 인스턴스 준비")
+        if not token:
+            raise RuntimeError(f"DISCORD_TOKEN_{n:03d} 이 설정되지 않았습니다. .env 파일을 확인하세요.")
+        print(f"도돌봇{n:03d} 토큰 발견 — 단일봇 모드로 시작")
+        await run_bot_safe(n, token)
+    else:
+        # 멀티봇 모드: BOT_NUMBER 미설정 시 .env의 모든 토큰을 한 프로세스에서 실행
+        tasks = []
+        for n in range(1, 10):
+            token = os.getenv(f"DISCORD_TOKEN_{n:03d}")
+            if token:
+                tasks.append(run_bot_safe(n, token))
+                print(f"도돌봇{n:03d} 토큰 발견 — 인스턴스 준비")
 
-    if not tasks:
-        raise RuntimeError("DISCORD_TOKEN_001 이 설정되지 않았습니다. .env 파일을 확인하세요.")
+        if not tasks:
+            raise RuntimeError("DISCORD_TOKEN_001 이 설정되지 않았습니다. .env 파일을 확인하세요.")
 
-    await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

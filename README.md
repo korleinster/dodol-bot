@@ -421,11 +421,34 @@ docker compose logs -f  # confirm bots online
 
 ### Update Code
 
+Each bot runs in its own container — updates can be applied bot-by-bot without restarting all instances.
+
+**Full redeploy** (major code changes):
 ```bash
 ssh leinster@192.168.31.68
 cd ~/dodol-bot
 git pull origin main
-docker compose up -d --build
+docker compose build
+docker compose up -d
+```
+
+**Rolling deploy** (sequential per-bot restart, minimum disruption):
+```bash
+docker compose build
+docker compose up -d --no-deps dodol-bot-001
+docker compose up -d --no-deps dodol-bot-002
+docker compose up -d --no-deps dodol-bot-003
+docker compose up -d --no-deps dodol-bot-004
+```
+
+**Restart a single bot**:
+```bash
+docker compose restart dodol-bot-003
+```
+
+**Add a new bot** (after adding service to docker-compose.yml):
+```bash
+docker compose up -d --no-deps dodol-bot-005
 ```
 
 ### DB Backup
