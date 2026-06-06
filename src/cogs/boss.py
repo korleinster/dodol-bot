@@ -186,9 +186,11 @@ class Boss(commands.Cog):
         self.bot = bot
         self.bn  = bot.bot_number
         self.check_schedules.start()
+        self.cleanup_old_schedules.start()
 
     def cog_unload(self):
         self.check_schedules.cancel()
+        self.cleanup_old_schedules.cancel()
 
     # ── 채널 가드 ─────────────────────────────────────────
 
@@ -1090,6 +1092,24 @@ class Boss(commands.Cog):
                      new_at.isoformat(), new_miss),
                 )
                 await db.commit()
+
+    @tasks.loop(hours=24)
+    async def cleanup_old_schedules(self):
+        """30일 이상 된 notified=1 행 자동 삭제 (일 1회)"""
+        async with get_db() as db:
+            result = await db.execute(
+                "DELETE FROM schedules "
+                "WHERE bot_number=? AND notified=1 "
+                "AND scheduled_at < datetime('now', 'localtime', '-30 days')",
+                (self.bn,),
+            )
+            await db.commit()
+            if result.rowcount:
+                print(f"[도돌봇{self.bn:03d}] 오래된 예약 {result.rowcount}건 정리 완료")
+
+    @cleanup_old_schedules.before_loop
+    async def before_cleanup(self):
+        await self.bot.wait_until_ready()
 
     @check_schedules.before_loop
     async def before_check(self):

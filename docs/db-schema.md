@@ -75,6 +75,7 @@ SQLite 단일 파일 (`bot.db`). 테이블 3개.
 
 - UNIQUE 제약 없음 → 중복 방지는 코드 레벨에서 처리
 - `notified=1`인 행은 자동 미입력 처리 대상이 됨
+- `notified=1`이고 `scheduled_at`이 30일 이상 지난 행은 매일 자동 삭제 (`cleanup_old_schedules` 태스크)
 
 ### 예약 상태 흐름
 
