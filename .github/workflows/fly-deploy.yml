@@ -25,16 +25,16 @@ jobs:
             echo "$HOME/.fly/bin" >> $GITHUB_PATH
           fi
 
-      - name: Deploy all bots (image only, scale=0)
+      - name: Build & push images to fly.io registry (scale=0 유지)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
+          # --build-only: 이미지 빌드 후 레지스트리에 푸시만 (머신 생성 없음)
+          # 활성화 시 fly-activate.sh 가 scale=1 로 머신 생성
           for n in 001 002 003 004; do
-            echo "==> dodol-bot-$n 배포 중..."
+            echo "==> dodol-bot-$n 이미지 빌드 중..."
             flyctl deploy --config fly.${n}.toml --app dodol-bot-${n} \
               --remote-only \
-              --strategy immediate \
-              --smoke-checks=false
-            flyctl scale count 0 --app dodol-bot-${n} --yes
-            echo "==> dodol-bot-$n 완료 (scale=0)"
+              --build-only
+            echo "==> dodol-bot-$n 이미지 업데이트 완료"
           done

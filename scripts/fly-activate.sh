@@ -5,13 +5,20 @@
 # (동시 실행 시 Discord 토큰 충돌 발생)
 
 APPS=("dodol-bot-001" "dodol-bot-002" "dodol-bot-003" "dodol-bot-004")
+CONFIGS=("fly.001.toml" "fly.002.toml" "fly.003.toml" "fly.004.toml")
 
 echo "🚨 fly.io 긴급 활성화 시작..."
 echo "   리전: 도쿄 (nrt)"
 echo ""
 
-for APP in "${APPS[@]}"; do
-    flyctl scale count 1 --app "$APP" --yes
+for i in "${!APPS[@]}"; do
+    APP="${APPS[$i]}"
+    CFG="${CONFIGS[$i]}"
+    echo "[$APP] 배포 중..."
+    flyctl deploy --config "$CFG" --app "$APP" \
+        --remote-only \
+        --strategy immediate \
+        --smoke-checks=false
     echo "✅ $APP 활성화"
 done
 
