@@ -87,10 +87,6 @@ async def main() -> None:
         bot = make_bot(n)
         tasks = [run_bot_safe(n, token, bot)]
 
-        # 봇-001에서만 텔레그램 공지 리스너 실행
-        if n == 1:
-            from src.telegram_listener import run_telegram_listener
-            tasks.append(run_telegram_listener(bot))
 
         await asyncio.gather(*tasks)
 
@@ -111,10 +107,6 @@ async def main() -> None:
         if not tasks:
             raise RuntimeError("DISCORD_TOKEN_001 이 설정되지 않았습니다. .env 파일을 확인하세요.")
 
-        # 텔레그램 공지 리스너 (첫 번째 봇 인스턴스 사용)
-        if first_bot is not None:
-            from src.telegram_listener import run_telegram_listener
-            tasks.append(run_telegram_listener(first_bot))
 
         await asyncio.gather(*tasks)
 
