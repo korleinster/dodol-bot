@@ -27,8 +27,9 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
    - [Mini-Games](#mini-games)
    - [Help](#help)
 6. [Multi-Instance](#multi-instance)
-7. [Ubuntu + Docker Deployment](#ubuntu--docker-deployment)
-8. [Project Structure](#project-structure)
+7. [Telegram Broadcast](#telegram-broadcast)
+8. [Ubuntu + Docker Deployment](#ubuntu--docker-deployment)
+9. [Project Structure](#project-structure)
 
 ---
 
@@ -37,12 +38,14 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 | Item | Details |
 |---|---|
 | Language | Python 3.11 |
-| Bot framework | discord.py 2.3 |
+| Bot framework | discord.py 2.6.4 |
 | TTS | gTTS (Google TTS, `ko`) |
 | Database | SQLite + aiosqlite |
 | Price API | PLAYNC Developer Center (`dev-api.plaync.com/l2m/v1.0`) |
 | Weather API | Open-Meteo (free, no key required) |
-| Deployment | Ubuntu 26.04 + Docker Compose (Mac Mini) |
+| Telegram | python-telegram-bot 21.6 (공지 브로드캐스트) |
+| Primary deployment | Ubuntu 26.04 + Docker Compose (Mac Mini) |
+| DR deployment | Fly.io — 도쿄 nrt, scale=0 대기 |
 
 ---
 
@@ -95,6 +98,10 @@ PLAYNC_API_KEY=your_api_key_here
 
 # DB path (Docker volume mount — no change needed)
 DB_PATH=./data/bot.db
+
+# Telegram broadcast (optional — bot-001 only)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
 ```
 
 Bot tokens are issued at [Discord Developer Portal](https://discord.com/developers/applications).  
@@ -386,6 +393,21 @@ DISCORD_TOKEN_004=token_for_bot_004
 
 ---
 
+## Telegram Broadcast
+
+Bot-001 runs a Telegram listener alongside the Discord bot.  
+Sending `/announce <message>` to the configured Telegram bot broadcasts to all registered Discord channels.
+
+```
+/announce 서버 점검이 예정되어 있습니다   ← 모든 채널에 공지 embed 발송
+```
+
+- Requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`
+- Only the chat matching `TELEGRAM_CHAT_ID` can trigger broadcasts
+- If either env var is missing, the listener is silently disabled
+
+---
+
 ## Ubuntu + Docker Deployment
 
 Running on Mac Mini (Ubuntu 26.04 LTS) via Docker Compose.
@@ -481,6 +503,8 @@ tail -20 ~/dodol-bot/backups/backup.log
 | `DISCORD_TOKEN_001` ~ `004` | Bot tokens |
 | `PLAYNC_API_KEY` | PLAYNC Developer Center API key |
 | `DB_PATH` | `./data/bot.db` (Docker volume mount) |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token (optional, bot-001 only) |
+| `TELEGRAM_CHAT_ID` | Allowed Telegram chat ID for `/announce` |
 
 > Timezone: KST (UTC+9) — configured via `timedatectl set-timezone Asia/Seoul`.
 
@@ -494,16 +518,27 @@ DiscordBot/
 ├── requirements.txt
 ├── Dockerfile               # Docker build (Python 3.11 + FFmpeg)
 ├── docker-compose.yml       # Mac Mini deployment config
-├── deploy.sh                # Deployment guide script
+├── fly.001.toml             # Fly.io DR config — bot-001 (nrt)
+├── fly.002.toml             # Fly.io DR config — bot-002 (nrt)
+├── fly.003.toml             # Fly.io DR config — bot-003 (nrt)
+├── fly.004.toml             # Fly.io DR config — bot-004 (nrt)
 ├── backup.sh                # DB backup → Google Drive (cron daily 04:00)
 ├── .env.example
 ├── .gitignore
 ├── LICENSE
+├── .github/
+│   └── workflows/
+│       └── fly-deploy.yml   # Auto image build & push to fly.io on push
+├── scripts/
+│   ├── fly-activate.sh      # Emergency: activate fly.io DR (scale=1)
+│   ├── fly-deactivate.sh    # Recovery: deactivate fly.io (scale=0)
+│   └── fly-sync-db.sh       # Sync Mac Mini DB → fly.io volumes (cron daily 03:00)
 ├── data/
 │   └── bot.db               # SQLite DB (Docker volume mount → /home/leinster/dodol-bot/data/)
 └── src/
     ├── db.py                # DB init / connection / default boss list
     ├── korean.py            # Korean consonant search, partial matching
+    ├── telegram_listener.py # Telegram → Discord broadcast (/announce)
     └── cogs/
         ├── setup.py         # Deploy, channel setup
         ├── boss.py          # Boss management / kill / miss / reservations / server-open / fixed-schedule
@@ -522,8 +557,9 @@ DiscordBot/
 |---|---|
 | [docs/db-schema.md](docs/db-schema.md) | DB table structure and column descriptions |
 | [docs/boss-data.md](docs/boss-data.md) | Full default boss list and data reference |
-| [docs/notification-logic.md](docs/notification-logic.md) | Alert timing, auto re-scheduling, auto-miss flow |
+| [docs/notification-logic.md](docs/notification-logic.md) | Alert timing (1s loop, ±2s precision), auto re-scheduling, auto-miss flow |
 | [docs/error-cases.md](docs/error-cases.md) | Bot behavior for edge cases |
+| [docs/migration-plan-macmini.md](docs/migration-plan-macmini.md) | Deployment infrastructure history and fly.io DR setup |
 
 ---
 

@@ -6,27 +6,28 @@
 
 ## 실행 주기
 
-`@tasks.loop(seconds=30)` — 30초마다 실행.  
+`@tasks.loop(seconds=1)` — **1초**마다 실행.  
 봇 준비 완료(`wait_until_ready`) 후 시작.
 
 > **시각 정밀도**: `scheduled_at`은 초 단위까지 저장.  
-> 컷/멍/젠 명령에서 시각 지정 없이 입력하면 `now()` 그대로(초 포함) 기준 시각으로 사용.  
-> 시각을 직접 지정(`HH:MM`)해도 명령 처리 시점의 초(second)가 그대로 적용됨.
+> 컷/멍/젠 명령에서 시각을 직접 지정(`HH:MM`)하면 `second=0`으로 정규화됨.  
+> 시각 지정 없이 입력하면 `now()` 그대로(초 포함) 사용.
 
 ---
 
 ## 알림 3단계 타이밍
 
-루프 실행 시각을 `now`라 할 때, 각 단계의 발송 구간:
+루프 실행 시각을 `n`이라 할 때 각 단계의 발송 구간:
 
 | 단계 | 구간 | 조건 |
 |---|---|---|
-| 5분 전 | `now+90s < scheduled_at ≤ now+330s` | `warned_5min=0` |
-| 1분 전 | `now+60s < scheduled_at ≤ now+90s` | `warned_1min=0` |
-| 정각 | `scheduled_at ≤ now+60s` | `notified=0` |
+| 5분 전 | `n+90s < scheduled_at ≤ n+330s` | `warned_5min=0` |
+| 1분 전 | `n+2s  < scheduled_at ≤ n+90s`  | `warned_1min=0` |
+| 정각   | `scheduled_at ≤ n+2s`           | `notified=0` |
 
-> 구간이 겹치지 않도록 설계되어 있음.  
-> 정각 구간은 `scheduled_at`가 이미 지난 경우도 포함 (미처리 건 처리).
+> 루프가 1초 간격이므로 정각 알림의 최대 오차는 **±2초** 이내.  
+> 정각 구간은 `scheduled_at`이 이미 지난 경우도 포함 (미처리 건 처리).  
+> 구간이 겹치지 않도록 설계: t2(2초) / t90(90초) / t330(330초) 경계값 사용.
 
 ### 발송 후 상태 변경
 
@@ -34,7 +35,7 @@
 |---|---|
 | 5분 전 | `warned_5min=1` |
 | 1분 전 | `warned_5min=1, warned_1min=1` |
-| 정각 | `warned_5min=1, warned_1min=1, notified=1` |
+| 정각   | `warned_5min=1, warned_1min=1, notified=1` |
 
 ---
 
@@ -84,7 +85,7 @@
 ### 흐름
 
 ```
-1. notified=1 이고 fixed=0 인 예약 전체 조회 (DESC)
+1. notified=1 이고 fixed=0 인 예약 전체 조회 (notified DESC, scheduled_at DESC)
 2. boss_name 기준으로 가장 최근 notified 행 1개씩 추출
 3. scheduled_at + auto_schedule_seconds > now 이면 SKIP (유예시간 내)
 4. notified=0 예약이 이미 있으면 SKIP (컷/멍 처리 완료)
@@ -92,7 +93,8 @@
 6. miss_count = 이전 miss_count + 1 (전진 횟수만큼 추가 누적)
 ```
 
-> `miss_count`는 컷/멍 처리 시 0으로 초기화됨.
+> `miss_count`는 컷/멍 처리 시 0으로 초기화됨.  
+> `_get_last_schedule`은 `notified DESC` 정렬로 알림 완료 행을 우선 반환.
 
 ---
 
@@ -112,7 +114,7 @@ else:  → "N시간 N분 후"
 | 보스 종류 | miss_count | 이유 |
 |---|---|---|
 | `spawns_on_open=0` (오픈 비연동) | 1 | 오픈시각에 이미 등장 → 기록 못 한 것으로 간주 |
-| `spawns_on_open=1` (오픈 연동) | 0 | 오픈+지연시간이 첫 등장 → 아직 등장 안 함 |
+| `spawns_on_open=1` (오픈 연동)  | 0 | 오픈+지연시간이 첫 등장 → 아직 등장 안 함 |
 
 ---
 
