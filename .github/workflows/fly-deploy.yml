@@ -25,7 +25,7 @@ jobs:
             flyctl deploy --config fly.${n}.toml --app dodol-bot-${n} \
               --remote-only \
               --strategy immediate \
-              --no-health-checks
+              --smoke-checks=false
             flyctl scale count 0 --app dodol-bot-${n} --yes
             echo "==> dodol-bot-$n 완료 (scale=0)"
           done
