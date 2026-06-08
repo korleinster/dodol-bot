@@ -13,8 +13,17 @@ jobs:
 
       - name: Install flyctl
         run: |
-          curl -L https://fly.io/install.sh | sh
-          echo "$HOME/.fly/bin" >> $GITHUB_PATH
+          # 공식 action 없이 apt-get 또는 curl 순서로 설치
+          if apt-cache show flyctl &>/dev/null 2>&1; then
+            sudo apt-get install -y flyctl
+          else
+            for i in 1 2 3; do
+              curl -fsSL https://fly.io/install.sh | sh && break
+              echo "설치 시도 $i 실패, 5초 후 재시도..."
+              sleep 5
+            done
+            echo "$HOME/.fly/bin" >> $GITHUB_PATH
+          fi
 
       - name: Deploy all bots (image only, scale=0)
         env:
