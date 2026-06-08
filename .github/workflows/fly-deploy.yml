@@ -1,0 +1,42 @@
+name: Deploy to Fly.io (staging)
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy all bots to fly.io (nrt, scale=0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy dodol-bot-001
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy --config fly.001.toml --app dodol-bot-001 --remote-only
+          flyctl scale count 0 --app dodol-bot-001 --yes
+
+      - name: Deploy dodol-bot-002
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy --config fly.002.toml --app dodol-bot-002 --remote-only
+          flyctl scale count 0 --app dodol-bot-002 --yes
+
+      - name: Deploy dodol-bot-003
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy --config fly.003.toml --app dodol-bot-003 --remote-only
+          flyctl scale count 0 --app dodol-bot-003 --yes
+
+      - name: Deploy dodol-bot-004
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy --config fly.004.toml --app dodol-bot-004 --remote-only
+          flyctl scale count 0 --app dodol-bot-004 --yes

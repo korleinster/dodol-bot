@@ -70,3 +70,50 @@ docker compose logs -f dodol-bot-003
 - 컨테이너 재빌드해도 DB 보존됨
 - 자동 백업: 매일 04:00 KST `backup.sh` cron 실행 → Google Drive `dodol-bot-backups/` (7일 보관)
 - 수동 백업: `~/dodol-bot/backup.sh`
+
+## fly.io 이중화 (DR — 도쿄 리전 nrt)
+
+**목적**: 맥미니 장애 시 즉시 전환할 수 있는 staging 상태 유지  
+**구조**: 코드는 항상 최신 (GitHub Actions 자동 배포), DB는 매일 덮어씌우기  
+**주의**: 맥미니와 fly.io는 동시 실행 불가 (Discord 토큰 충돌) — 진짜 failover 전용
+
+### fly.io 앱 구성
+| 앱 이름 | BOT_NUMBER | Volume | 리전 |
+|---------|-----------|--------|------|
+| dodol-bot-001 | 1 | dodol_bot_001_data | nrt |
+| dodol-bot-002 | 2 | dodol_bot_002_data | nrt |
+| dodol-bot-003 | 3 | dodol_bot_003_data | nrt |
+| dodol-bot-004 | 4 | dodol_bot_004_data | nrt |
+
+### 자동 배포
+`git push origin main` → GitHub Actions → fly.io 4개 앱 빌드 + 배포 + scale=0 유지
+
+### 긴급 활성화 (맥미니 다운 시)
+```bash
+bash scripts/fly-activate.sh     # fly.io 전체 봇 scale=1 → ~30초 후 온라인
+```
+
+### 복구 후 비활성화
+```bash
+bash scripts/fly-deactivate.sh   # fly.io 전체 봇 scale=0 → staging 대기
+```
+
+### DB 동기화 (맥미니에서 실행, flyctl 필요)
+```bash
+bash ~/dodol-bot/scripts/fly-sync-db.sh   # 수동 실행
+# cron: 0 18 * * * (KST 03:00) 자동 실행 중
+```
+
+### fly.io secrets 재등록 (최초 1회 또는 토큰 변경 시)
+```bash
+# 맥미니에서 실행
+for n in 001 002 003 004; do
+    flyctl secrets import --app "dodol-bot-$n" < ~/dodol-bot/.env
+done
+```
+
+### fly.io 상태 확인
+```bash
+flyctl apps list
+flyctl status --app dodol-bot-001
+```
