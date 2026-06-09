@@ -1,6 +1,7 @@
 """보스 등록/관리 + 컷/멍/예약/오픈타임"""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -942,6 +943,14 @@ class Boss(commands.Cog):
 
     @tasks.loop(seconds=1)
     async def check_schedules(self):
+        try:
+            await self._check_schedules_inner()
+        except Exception as e:
+            import traceback
+            print(f"[check_schedules] 루프 내부 오류 (루프 유지): {e}")
+            traceback.print_exc()
+
+    async def _check_schedules_inner(self):
         n = now()
         base = (
             "SELECT s.*, gc.text_channel_id, COALESCE(b.fixed, 0) AS boss_fixed "
@@ -1195,6 +1204,16 @@ class Boss(commands.Cog):
                 )
                 await db.commit()
         print(f"[도돌봇{self.bn:03d}] 재시작 복구 완료 — {len(latest)}개 보스 자동 미입력 처리 확인")
+
+    @check_schedules.error
+    async def on_check_schedules_error(self, error: Exception):
+        """루프 예외로 중단됐을 때 자동 재시작"""
+        import traceback
+        print(f"[도돌봇{self.bn:03d}] check_schedules 루프 중단됨, 재시작합니다: {error}")
+        traceback.print_exc()
+        await asyncio.sleep(1)
+        if not self.check_schedules.is_running():
+            self.check_schedules.restart()
 
 
 async def setup(bot: commands.Bot):
