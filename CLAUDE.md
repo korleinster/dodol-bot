@@ -15,6 +15,15 @@
 4. **커밋**
 5. **푸시** — `git push origin main`
 
+## 배포 후 필수 작업
+
+배포(맥미니 `docker compose up -d`) 완료 후 **반드시** 전체 문서를 갱신할 것:
+
+- `README.md` — 신규 기능, 명령어, 구조 변경 반영
+- `docs/` — 관련 명세 파일 업데이트
+- `CLAUDE.md` — 운영 규칙/절차 변경 시 반영
+- 커밋 & 푸시
+
 ## 배포 방법
 
 **맥미니 Ubuntu + Docker Compose 기반 (봇별 독립 컨테이너)**  

@@ -170,7 +170,7 @@ Fixed-schedule bosses appear at the top, then sorted by respawn time ascending.
 컷 체르 0530
 05:30 체르 컷
 
-ㅊㄹ ㅋ               ← Korean consonants (3+ chars) + ㅋ (kill shortcut)
+ㅊㄹ ㅋ               ← Korean consonants + ㅋ (kill shortcut, no length limit)
 ㅋ ㅊㄹ               ← both orderings work
 컷 ㅊㄹ
 
@@ -184,7 +184,7 @@ Fixed-schedule bosses appear at the top, then sorted by respawn time ascending.
 ```
 체르 멍
 멍 체르
-ㅊㄹ ㅁ               ← consonants (3+ chars) + ㅁ (miss shortcut)
+ㅊㄹ ㅁ               ← consonants + ㅁ (miss shortcut, no length limit)
 ㅁ ㅊㄹ               ← both orderings work
 체르투바멍            ← no spaces required
 ㅊㄹㅌㅂㅁ
@@ -335,11 +335,13 @@ Queries marketplace prices via the PLAYNC Developer Center API. Also shows the l
 
 ### Weather
 
-Shows 3-day weather (Open-Meteo API).
+Shows 3-day weather (Open-Meteo API, Seongnam city).
 
 ```
 날씨                       ← today / tomorrow / day after tomorrow + precipitation probability
 ```
+
+- **Auto-send at 07:00 KST daily** — automatically posted to all configured channels every morning.
 
 ---
 
@@ -393,7 +395,9 @@ DISCORD_TOKEN_004=token_for_bot_004
 
 ---
 
-## Telegram Broadcast
+## Telegram Integration
+
+### Broadcast (공지)
 
 Bot-001 runs a Telegram listener alongside the Discord bot.  
 Sending `/announce <message>` to the configured Telegram bot broadcasts to all registered Discord channels.
@@ -402,9 +406,25 @@ Sending `/announce <message>` to the configured Telegram bot broadcasts to all r
 /announce 서버 점검이 예정되어 있습니다   ← 모든 채널에 공지 embed 발송
 ```
 
-- Requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`
-- Only the chat matching `TELEGRAM_CHAT_ID` can trigger broadcasts
-- If either env var is missing, the listener is silently disabled
+### Operational Alerts (운영 알림)
+
+The bot automatically sends Telegram notifications for operational events:
+
+| Event | Telegram | Discord channel |
+|---|---|---|
+| ✅ Deployment start | ✅ | ✅ |
+| ⚠️ Error restart (Docker restart policy) | ✅ | ✅ |
+| 🔄 Network reconnection (WebSocket drop) | ✅ | ❌ (noise prevention) |
+| ⚠️ `check_schedules` loop exception (loop kept alive) | ✅ | ✅ |
+| ⚠️ `check_schedules` loop crash + restart | ✅ | ✅ |
+
+Restart type is detected via `/tmp` marker file and `on_ready` call count:
+- No marker + first `on_ready` → deployment
+- Marker exists + first `on_ready` → error restart (same container, process restarted)
+- `on_ready` called 2+ times → network reconnection
+
+**Requirements:** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`  
+If either is missing, all Telegram features are silently disabled.
 
 ---
 
@@ -539,13 +559,15 @@ DiscordBot/
     ├── db.py                # DB init / connection / default boss list
     ├── korean.py            # Korean consonant search, partial matching
     ├── telegram_listener.py # Telegram → Discord broadcast (/announce)
+    ├── utils/
+    │   └── notify.py        # Operational alert utility (Discord + Telegram)
     └── cogs/
         ├── setup.py         # Deploy, channel setup
         ├── boss.py          # Boss management / kill / miss / reservations / server-open / fixed-schedule
         ├── tts.py           # TTS + bot restart
         ├── market.py        # PLAYNC price API
         ├── minigame.py      # Mini-games, random draw, horse race
-        ├── weather.py       # Weather (Open-Meteo)
+        ├── weather.py       # Weather (Open-Meteo) + daily 07:00 KST auto-send
         └── help.py          # Help (section embeds)
 ```
 
