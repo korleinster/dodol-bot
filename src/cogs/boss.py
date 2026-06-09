@@ -946,9 +946,12 @@ class Boss(commands.Cog):
         try:
             await self._check_schedules_inner()
         except Exception as e:
-            import traceback
-            print(f"[check_schedules] 루프 내부 오류 (루프 유지): {e}")
-            traceback.print_exc()
+            import traceback as _tb
+            msg = f"check_schedules 루프 예외 발생 (루프 유지 중)\n`{type(e).__name__}: {e}`"
+            print(f"[도돌봇{self.bn:03d}] {msg}")
+            _tb.print_exc()
+            from src.utils.notify import alert
+            await alert(self.bot, self.bn, msg)
 
     async def _check_schedules_inner(self):
         n = now()
@@ -1207,10 +1210,13 @@ class Boss(commands.Cog):
 
     @check_schedules.error
     async def on_check_schedules_error(self, error: Exception):
-        """루프 예외로 중단됐을 때 자동 재시작"""
+        """루프 예외로 중단됐을 때 알림 발송 + 자동 재시작"""
         import traceback
-        print(f"[도돌봇{self.bn:03d}] check_schedules 루프 중단됨, 재시작합니다: {error}")
+        msg = f"check_schedules 루프 중단! 재시작합니다.\n`{type(error).__name__}: {error}`"
+        print(f"[도돌봇{self.bn:03d}] {msg}")
         traceback.print_exc()
+        from src.utils.notify import alert
+        await alert(self.bot, self.bn, msg)
         await asyncio.sleep(1)
         if not self.check_schedules.is_running():
             self.check_schedules.restart()

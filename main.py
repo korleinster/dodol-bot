@@ -37,7 +37,7 @@ async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) 
     async def on_ready():
         commit = os.getenv("GIT_COMMIT", "unknown")
         print(f"[도돌봇{bot_number:03d}] {bot.user} 온라인 (commit: {commit})")
-        await _notify_ready(bot, bot_number)
+        await _notify_ready(bot, bot_number, commit)
 
     for cog in COGS:
         await bot.load_extension(cog)
@@ -52,8 +52,9 @@ async def run_bot_safe(bot_number: int, token: str, bot: commands.Bot | None = N
         print(f"[도돌봇{bot_number:03d}] 오류로 종료: {e}")
 
 
-async def _notify_ready(bot: commands.Bot, bot_number: int) -> None:
+async def _notify_ready(bot: commands.Bot, bot_number: int, commit: str = "unknown") -> None:
     from src.db import get_db
+    from src.utils.notify import send_telegram
     async with get_db() as db:
         async with db.execute(
             "SELECT guild_id, text_channel_id FROM guild_config WHERE bot_number=?",
@@ -69,6 +70,8 @@ async def _notify_ready(bot: commands.Bot, bot_number: int) -> None:
                 await ch.send(f"✅ 도돌봇{bot_number:03d} 업데이트 완료. 온라인입니다.")
             except Exception:
                 pass
+
+    await send_telegram(f"✅ 도돌봇{bot_number:03d} 온라인 (commit: {commit})")
 
 
 async def main() -> None:

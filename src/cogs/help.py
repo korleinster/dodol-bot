@@ -46,7 +46,7 @@ def _build_embeds(bn: int) -> list[discord.Embed]:
         "체르 멍  /  멍 체르\n"
         "ㅊㄹ ㅁ  /  ㅁ ㅊㄹ\n"
         "```"
-        "※ 초성 단축은 보스 이름 **3글자 이상**부터"
+        "※ 초성 단축은 글자 수 제한 없음 (앞에서부터 매칭)"
     ), inline=False)
     embeds.append(e)
 
