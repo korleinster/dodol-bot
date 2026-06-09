@@ -948,7 +948,7 @@ class Boss(commands.Cog):
         except Exception as e:
             import traceback as _tb
             msg = f"check_schedules 루프 예외 발생 (루프 유지 중)\n`{type(e).__name__}: {e}`"
-            print(f"[도돌봇{self.bn:03d}] {msg}")
+            print(f"[뚠뚠봇{self.bn:03d}] {msg}")
             _tb.print_exc()
             from src.utils.notify import alert
             await alert(self.bot, self.bn, msg)
@@ -1142,7 +1142,7 @@ class Boss(commands.Cog):
             )
             await db.commit()
             if result.rowcount:
-                print(f"[도돌봇{self.bn:03d}] 오래된 예약 {result.rowcount}건 정리 완료")
+                print(f"[뚠뚠봇{self.bn:03d}] 오래된 예약 {result.rowcount}건 정리 완료")
 
     @cleanup_old_schedules.before_loop
     async def before_cleanup(self):
@@ -1206,14 +1206,14 @@ class Boss(commands.Cog):
                      new_at.isoformat(), new_miss),
                 )
                 await db.commit()
-        print(f"[도돌봇{self.bn:03d}] 재시작 복구 완료 — {len(latest)}개 보스 자동 미입력 처리 확인")
+        print(f"[뚠뚠봇{self.bn:03d}] 재시작 복구 완료 — {len(latest)}개 보스 자동 미입력 처리 확인")
 
     @check_schedules.error
     async def on_check_schedules_error(self, error: Exception):
         """루프 예외로 중단됐을 때 알림 발송 + 자동 재시작"""
         import traceback
         msg = f"check_schedules 루프 중단! 재시작합니다.\n`{type(error).__name__}: {error}`"
-        print(f"[도돌봇{self.bn:03d}] {msg}")
+        print(f"[뚠뚠봇{self.bn:03d}] {msg}")
         traceback.print_exc()
         from src.utils.notify import alert
         await alert(self.bot, self.bn, msg)

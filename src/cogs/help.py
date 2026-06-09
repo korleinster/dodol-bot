@@ -13,8 +13,8 @@ def _build_embeds(bn: int) -> list[discord.Embed]:
     # ── 채널 설정 ─────────────────────────────────────────
     e = discord.Embed(title="⚙️ 채널 설정", color=0x5865F2)
     e.add_field(name="​", value=(
-        "`소환` — 서버 내 모든 도돌봇 배치 현황\n"
-        "`소환 도돌봇001` — 이 채널에 배치\n"
+        "`소환` — 서버 내 모든 뚠뚠봇 배치 현황\n"
+        "`소환 뚠뚠봇001` — 이 채널에 배치\n"
         "　　음성방 입장 상태로 소환하면 음성 채널도 자동 연결\n"
         "`설정` — 현재 설정 확인"
     ), inline=False)
@@ -165,7 +165,7 @@ def _build_embeds(bn: int) -> list[discord.Embed]:
     embeds.append(e)
 
     # 마지막 embed에 푸터
-    embeds[-1].set_footer(text=f"도돌봇{bn:03d}")
+    embeds[-1].set_footer(text=f"뚠뚠봇{bn:03d}")
 
     return embeds
 

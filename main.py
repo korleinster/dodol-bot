@@ -70,7 +70,7 @@ async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) 
         reason = _detect_start_reason(bot_number, bot._ready_count)
         bot._ready_count += 1
         emoji, label = _REASON_LABEL[reason]
-        print(f"[도돌봇{bot_number:03d}] {bot.user} 온라인 — {label} (commit: {commit})")
+        print(f"[뚠뚠봇{bot_number:03d}] {bot.user} 온라인 — {label} (commit: {commit})")
         await _notify_ready(bot, bot_number, commit, reason)
 
     for cog in COGS:
@@ -83,7 +83,7 @@ async def run_bot_safe(bot_number: int, token: str, bot: commands.Bot | None = N
     try:
         await run_bot(bot_number, token, bot)
     except Exception as e:
-        print(f"[도돌봇{bot_number:03d}] 오류로 종료: {e}")
+        print(f"[뚠뚠봇{bot_number:03d}] 오류로 종료: {e}")
 
 
 async def _notify_ready(
@@ -110,12 +110,12 @@ async def _notify_ready(
             ch = bot.get_channel(ch_id)
             if ch:
                 try:
-                    await ch.send(f"{emoji} 도돌봇{bot_number:03d} {label}. 온라인입니다.")
+                    await ch.send(f"{emoji} 뚠뚠봇{bot_number:03d} {label}. 온라인입니다.")
                 except Exception:
                     pass
 
     # 텔레그램: 모든 유형 발송
-    await send_telegram(f"{emoji} 도돌봇{bot_number:03d} {label} (commit: {commit})")
+    await send_telegram(f"{emoji} 뚠뚠봇{bot_number:03d} {label} (commit: {commit})")
 
 
 async def main() -> None:
@@ -129,7 +129,7 @@ async def main() -> None:
         token = os.getenv(f"DISCORD_TOKEN_{n:03d}")
         if not token:
             raise RuntimeError(f"DISCORD_TOKEN_{n:03d} 이 설정되지 않았습니다. .env 파일을 확인하세요.")
-        print(f"도돌봇{n:03d} 토큰 발견 — 단일봇 모드로 시작")
+        print(f"뚠뚠봇{n:03d} 토큰 발견 — 단일봇 모드로 시작")
 
         bot = make_bot(n)
         tasks = [run_bot_safe(n, token, bot)]
@@ -149,7 +149,7 @@ async def main() -> None:
                 if first_bot is None:
                     first_bot = bot  # 첫 번째 봇에 텔레그램 리스너 연결
                 tasks.append(run_bot_safe(n, token, bot))
-                print(f"도돌봇{n:03d} 토큰 발견 — 인스턴스 준비")
+                print(f"뚠뚠봇{n:03d} 토큰 발견 — 인스턴스 준비")
 
         if not tasks:
             raise RuntimeError("DISCORD_TOKEN_001 이 설정되지 않았습니다. .env 파일을 확인하세요.")

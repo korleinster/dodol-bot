@@ -63,4 +63,4 @@ async def send_discord_alert(bot: commands.Bot, bot_number: int, text: str) -> N
 async def alert(bot: commands.Bot, bot_number: int, text: str) -> None:
     """Discord + Telegram 동시 발송."""
     await send_discord_alert(bot, bot_number, text)
-    await send_telegram(f"[도돌봇{bot_number:03d}] {text}")
+    await send_telegram(f"[뚠뚠봇{bot_number:03d}] {text}")
