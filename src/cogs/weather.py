@@ -116,19 +116,38 @@ class Weather(commands.Cog):
     # ── 매일 07:00 KST 자동 날씨 발송 ───────────────────────
     @tasks.loop(time=time(hour=7, minute=0, tzinfo=KST))
     async def daily_weather(self):
+        print(f"[도돌봇{self.bn:03d}] [Weather] 자동 날씨 발송 시작")
         embed = await _fetch_weather_embed()
         if embed is None:
+            print(f"[도돌봇{self.bn:03d}] [Weather] embed 생성 실패 — API 오류")
             return
         embed.set_footer(text="매일 07:00 자동 발송")
 
         ch_ids = await self._get_all_channels()
+        print(f"[도돌봇{self.bn:03d}] [Weather] 대상 채널: {ch_ids}")
         for ch_id in ch_ids:
             ch = self.bot.get_channel(ch_id)
+            if ch is None:
+                try:
+                    ch = await self.bot.fetch_channel(ch_id)
+                except Exception as e:
+                    print(f"[도돌봇{self.bn:03d}] [Weather] 채널 fetch 실패 ch={ch_id}: {e}")
+                    continue
             if isinstance(ch, discord.TextChannel):
                 try:
                     await ch.send(embed=embed)
+                    print(f"[도돌봇{self.bn:03d}] [Weather] 발송 완료 ch={ch_id}")
                 except Exception as e:
-                    print(f"[Weather] 자동 발송 실패 ch={ch_id}: {e}")
+                    print(f"[도돌봇{self.bn:03d}] [Weather] 자동 발송 실패 ch={ch_id}: {e}")
+
+    @daily_weather.error
+    async def on_daily_weather_error(self, error: Exception):
+        import traceback
+        msg = f"daily_weather 루프 오류\n`{type(error).__name__}: {error}`"
+        print(f"[도돌봇{self.bn:03d}] {msg}")
+        traceback.print_exc()
+        from src.utils.notify import alert
+        await alert(self.bot, self.bn, msg)
 
     @daily_weather.before_loop
     async def before_daily_weather(self):
