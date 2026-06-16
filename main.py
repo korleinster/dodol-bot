@@ -4,7 +4,6 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from src.db import init_db, ensure_default_bosses
-from src.telegram_listener import run_telegram_listener
 
 load_dotenv()
 
@@ -134,8 +133,6 @@ async def main() -> None:
 
         bot = make_bot(n)
         tasks = [run_bot_safe(n, token, bot)]
-        if n == 1:
-            tasks.append(run_telegram_listener(bot))
 
         await asyncio.gather(*tasks)
 
@@ -155,9 +152,6 @@ async def main() -> None:
 
         if not tasks:
             raise RuntimeError("DISCORD_TOKEN_001 이 설정되지 않았습니다. .env 파일을 확인하세요.")
-
-        if first_bot:
-            tasks.append(run_telegram_listener(first_bot))
 
         await asyncio.gather(*tasks)
 
