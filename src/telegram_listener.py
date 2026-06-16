@@ -26,6 +26,12 @@ async def _broadcast(bot: commands.Bot, text: str) -> int:
     sent = 0
     for (ch_id,) in rows:
         ch = bot.get_channel(ch_id)
+        if ch is None:
+            try:
+                ch = await bot.fetch_channel(ch_id)
+            except Exception:
+                print(f"[텔레그램→Discord] 채널 {ch_id} 조회 실패 — 스킵")
+                continue
         if not isinstance(ch, discord.TextChannel):
             continue
         try:
