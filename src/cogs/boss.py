@@ -652,12 +652,12 @@ class Boss(commands.Cog):
             color=color,
         )
         if action == "spawn":
-            embed.add_field(name="출현 예정", value=spawn_at.strftime("%m/%d %H:%M"))
-            embed.add_field(name="남은 시간", value=fmt_remain(spawn_at - now()))
+            embed.description = f"`{spawn_at.strftime('%m/%d %H:%M')}` · {fmt_remain(spawn_at - now())}"
         else:
-            embed.add_field(name="기준 시각", value=base_time.strftime("%H:%M"))
-            embed.add_field(name="다음 리스폰", value=spawn_at.strftime("%m/%d %H:%M"))
-            embed.add_field(name="남은 시간", value=fmt_remain(spawn_at - now()))
+            embed.description = (
+                f"`{base_time.strftime('%H:%M')}` → `{spawn_at.strftime('%m/%d %H:%M')}`"
+                f"  ·  {fmt_remain(spawn_at - now())}"
+            )
         if action == "cut" and user is not None:
             username = getattr(user, "display_name", None) or user.name
             embed.set_footer(text=f"처리자: {username}")
