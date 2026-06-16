@@ -1,4 +1,4 @@
-# Dodol Bot — Lineage 2M Boss Alert Discord Bot
+# DdunDdun Bot — Lineage 2M Boss Alert Discord Bot
 
 A Discord bot for Lineage 2M that provides boss kill/miss/reservation management, TTS alerts, marketplace price lookup, weather, and mini-games.
 
@@ -43,7 +43,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 | Database | SQLite + aiosqlite |
 | Price API | PLAYNC Developer Center (`dev-api.plaync.com/l2m/v1.0`) |
 | Weather API | Open-Meteo (free, no key required) |
-| Telegram | python-telegram-bot 21.6 (공지 브로드캐스트) |
+| Telegram | aiohttp (운영 알림 발송) / requests (server_bot 공지) |
 | Primary deployment | Ubuntu 26.04 + Docker Compose (Mac Mini) |
 | DR deployment | Fly.io — 도쿄 nrt, scale=0 대기 |
 
@@ -111,11 +111,11 @@ PLAYNC API keys are issued at [PLAYNC Developer Center](https://developers.playn
 
 ## Deploying the Bot
 
-When you first add the bot to a server, deploy it with the `소환 도돌봇001` command in any channel.
+When you first add the bot to a server, deploy it with the `소환 뚠뚠봇001` command in any channel.
 
 ```
 소환                ← Check deployment status of all Dodol Bot instances on the server
-소환 도돌봇001      ← Deploy Dodol Bot 001 to current text + voice channel
+소환 뚠뚠봇001      ← Deploy Dodol Bot 001 to current text + voice channel
 설정                ← Check this bot's current channel assignment
 ```
 
@@ -133,7 +133,7 @@ Commands are entered directly without any prefix.
 | Command | Description |
 |---|---|
 | `소환` | View all Dodol Bot deployments on the server |
-| `소환 도돌봇001` | Deploy Dodol Bot 001 to current channel |
+| `소환 뚠뚠봇001` | Deploy Dodol Bot 001 to current channel |
 | `설정` | Check current bot channel configuration |
 
 ---
@@ -399,12 +399,15 @@ DISCORD_TOKEN_004=token_for_bot_004
 
 ### Broadcast (공지)
 
-Bot-001 runs a Telegram listener alongside the Discord bot.  
-Sending `/announce <message>` to the configured Telegram bot broadcasts to all registered Discord channels.
+`/announce` is handled by **Mac Mini's `server_bot.py`** (systemd service), not the Discord bot itself.  
+It reads all registered channels from `guild_config` DB and posts to each via Discord REST API using per-bot tokens.
 
 ```
 /announce 서버 점검이 예정되어 있습니다   ← 모든 채널에 공지 embed 발송
 ```
+
+**Required env in `/etc/server-bot.env`:**
+- `DISCORD_TOKEN_001` ~ `DISCORD_TOKEN_004` (봇별 Discord 토큰)
 
 ### Operational Alerts (운영 알림)
 
