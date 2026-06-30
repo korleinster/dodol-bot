@@ -244,8 +244,8 @@ The exact-time alert shows **✅ Kill / 😶 Miss** buttons. Pressing them immed
 
 Z                    ← next 5 + TTS voice alert
 
-전체삭제              ← show contributor ranking, then reset reservations + contribution records
-초기화                ← same as above
+전체삭제              ← show contributor ranking, then reset non-fixed reservations/history + contribution records
+초기화                ← same as above (fixed-schedule bosses remain)
 
 기여자                ← show current cut contributor ranking
 보탐러                ← same as above
@@ -260,6 +260,7 @@ Every cut (via text command or button) records the user.
 - Kill embed shows `처리자: username` in the footer  
 - `기여자` / `보탐러`: shows ranked leaderboard up to current reset  
 - `초기화`: displays final ranking, then wipes all records
+- Reset removes non-fixed pending and notified reservation history, so auto-miss will not recreate normal boss reservations after reset. Fixed-schedule boss reservations remain.
 
 #### Auto-Miss
 

@@ -520,8 +520,9 @@ class Boss(commands.Cog):
             await message.channel.send(embed=ranking_embed)
 
         async with get_db() as db:
+            # 일반/임의 예약의 과거 notified=1 행까지 삭제해야 자동 미입력 재생성을 막을 수 있다.
             await db.execute(
-                "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND is_fixed=0",
+                "DELETE FROM schedules WHERE guild_id=? AND bot_number=? AND COALESCE(is_fixed,0)=0",
                 (message.guild.id, self.bn),
             )
             await db.execute(
@@ -529,7 +530,7 @@ class Boss(commands.Cog):
                 (message.guild.id, self.bn),
             )
             await db.commit()
-        await message.channel.send("🗑️ 고정 제외 예약 및 기여 기록이 초기화되었습니다.")
+        await message.channel.send("🗑️ 고정 보스 제외 모든 예약 기록과 기여 기록이 초기화되었습니다.")
 
     # ── 기여 랭킹 ─────────────────────────────────────────
 
