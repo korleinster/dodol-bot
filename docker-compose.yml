@@ -34,9 +34,14 @@ services:
   dodol-bot-003:
     image: dodol-bot:latest
     restart: always
-    env_file: .env
+    env_file:
+      - .env
+      - botam-003-bridge.env
     environment:
       - BOT_NUMBER=3
+      - BOTAM_WEB_BRIDGE_ENABLED=1
+      - BOTAM_BRIDGE_SOCKET=/app/data/botam-003.sock
+      - BOTAM_BRIDGE_GID=${DODOL_GID:-1000}
     volumes:
       - ./data:/app/data
     logging:

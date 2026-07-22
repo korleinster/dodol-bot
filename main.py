@@ -76,7 +76,14 @@ async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) 
     for cog in COGS:
         await bot.load_extension(cog)
 
-    await bot.start(token)
+    bridge = None
+    try:
+        from src.web_bridge import start_web_bridge
+        bridge = await start_web_bridge(bot)
+        await bot.start(token)
+    finally:
+        if bridge is not None:
+            await bridge.close()
 
 
 async def run_bot_safe(bot_number: int, token: str, bot: commands.Bot | None = None) -> None:

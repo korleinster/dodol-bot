@@ -252,6 +252,8 @@ class Boss(commands.Cog):
         except Exception as e:
             import traceback
             traceback.print_exc()
+            if getattr(message.author, "actor_type", "discord") == "web_guest":
+                raise RuntimeError("Boss command failed") from e
             await message.channel.send(f"⚠️ 오류: {e}")
 
     # ── 명령 라우터 ───────────────────────────────────────
@@ -318,7 +320,14 @@ class Boss(commands.Cog):
                         remain = fmt_remain(at - now())
                         tts_cog = self.bot.get_cog("TTS")
                         if tts_cog:
-                            await tts_cog.speak(message.guild, f"{nxt['content']} {remain}")
+                            is_web = getattr(message.author, "actor_type", "discord") == "web_guest"
+                            played = await tts_cog.speak(
+                                message.guild,
+                                f"{nxt['content']} {remain}",
+                                wait_until_complete=is_web,
+                            )
+                            if is_web and not played:
+                                raise RuntimeError("TTS playback failed")
             return
 
         # 서버오픈: "05:00 서버오픈" / "서버오픈 05:00" / "오픈 05:00"
@@ -639,10 +648,16 @@ class Boss(commands.Cog):
             # 컷 처리자 기록
             if action == "cut" and user is not None:
                 username = getattr(user, "display_name", None) or user.name
+                actor_type = getattr(user, "actor_type", "discord")
+                actor_ref = getattr(user, "actor_ref", f"discord:{user.id}")
                 await db.execute(
-                    """INSERT INTO contributions (guild_id, bot_number, user_id, username, boss_name, cut_at)
-                       VALUES (?,?,?,?,?,?)""",
-                    (guild_id, self.bn, user.id, username, boss["name"], now().isoformat()),
+                    """INSERT INTO contributions
+                       (guild_id, bot_number, user_id, username, actor_type, actor_ref, boss_name, cut_at)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (
+                        guild_id, self.bn, user.id, username, actor_type, actor_ref,
+                        boss["name"], now().isoformat(),
+                    ),
                 )
             await db.commit()
 
