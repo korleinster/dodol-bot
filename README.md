@@ -30,6 +30,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 7. [Telegram Broadcast](#telegram-broadcast)
 8. [Ubuntu + Docker Deployment](#ubuntu--docker-deployment)
 9. [Project Structure](#project-structure)
+10. [Bot 003 Web Bridge Pilot](#bot-003-web-bridge-pilot)
 
 ---
 
@@ -102,6 +103,7 @@ DB_PATH=./data/bot.db
 # Telegram broadcast (optional — bot-001 only)
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_CHAT_ID=your_telegram_chat_id
+
 ```
 
 Bot tokens are issued at [Discord Developer Portal](https://discord.com/developers/applications).  
@@ -121,6 +123,41 @@ When you first add the bot to a server, deploy it with the `소환 뚠뚠봇001`
 
 - The voice channel is automatically set to the voice room the user is **currently in** when the command is issued.
 - After deployment, commands only work in the configured text channel.
+
+## Bot 003 Web Bridge Pilot
+
+The optional web bridge reuses the existing Discord command handlers through a
+local Unix socket. It does not open a TCP port and is enabled only when both
+`BOT_NUMBER=3` and `BOTAM_WEB_BRIDGE_ENABLED=1` are present.
+
+Docker Compose configures the socket at `/app/data/botam-003.sock`. Requests are
+authenticated with a dedicated HMAC secret, timestamp, nonce, and body digest.
+The socket is mode `0660` and may be assigned to the host service group with
+`BOTAM_BRIDGE_GID`.
+
+Keep the bridge secret out of the shared `.env` so 001, 002, and 004 never
+receive it. Create the ignored bot-003-only file before the pilot deployment:
+
+```bash
+cp botam-003-bridge.env.example botam-003-bridge.env
+# Replace the placeholder with a distinct 32+ character secret.
+```
+
+The pilot exposes Botam, TTS, reset, and mini-games to an authenticated web
+guest. Process restart, bot summon, channel settings, logs, deployment, and
+container controls remain owner-only and are rejected by the bridge. TTS text
+is limited to 200 characters with at most three pending web jobs.
+
+Builds may contain the shared bridge code, but the pilot deployment recreates
+only `dodol-bot-003`:
+
+```bash
+docker compose up -d --no-deps dodol-bot-003
+```
+
+Do not recreate, restart, or reconfigure 001, 002, or 004 as part of the pilot.
+See [`docs/web-bridge-pilot.md`](docs/web-bridge-pilot.md) for verification and
+recovery details.
 
 ---
 
@@ -548,6 +585,7 @@ DiscordBot/
 ├── fly.004.toml             # Fly.io DR config — bot-004 (nrt)
 ├── backup.sh                # DB backup → Google Drive (cron daily 04:00)
 ├── .env.example
+├── botam-003-bridge.env.example
 ├── .gitignore
 ├── LICENSE
 ├── .github/

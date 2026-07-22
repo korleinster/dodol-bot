@@ -1,4 +1,5 @@
 .env
+botam-003-bridge.env
 __pycache__/
 *.pyc
 *.pyo

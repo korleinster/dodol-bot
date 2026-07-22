@@ -137,13 +137,16 @@ class TTS(commands.Cog):
         if cmd.lower().startswith("v ") or cmd.startswith("ㅍ "):
             text = cmd[2:].strip()
             if text:
-                await self.speak(message.guild, text)
+                is_web = getattr(message.author, "actor_type", "discord") == "web_guest"
+                played = await self.speak(message.guild, text, wait_until_complete=is_web)
+                if is_web and not played:
+                    raise RuntimeError("TTS playback failed")
         elif cmd.lower() in RESTART_KW:
             await self._restart(message)
 
     # ── speak (외부에서 호출 가능) ────────────────────────
 
-    async def speak(self, guild: discord.Guild, text: str) -> None:
+    async def speak(self, guild: discord.Guild, text: str, *, wait_until_complete: bool = False) -> bool:
         # 1. TTS 파일 먼저 생성
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp_path = f.name
@@ -154,15 +157,22 @@ class TTS(commands.Cog):
             print(f"[TTS] 파일 생성 완료: {tmp_path}")
         except Exception as e:
             print(f"[TTS] 파일 생성 실패: {type(e).__name__}: {e}")
-            return
+            return False
 
         # 2. 연결 확인 (이미 연결 중이면 그대로, 아니면 재연결)
         voice_client = await self.ensure_connected(guild)
         if not voice_client:
             print("[TTS] 음성채널 연결 없음 — 재생 취소")
-            return
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            return False
 
         # 3. 재생
+        loop = asyncio.get_running_loop()
+        playback_result = loop.create_future() if wait_until_complete else None
+
         def after(err):
             if err:
                 print(f"[TTS] 재생 오류: {type(err).__name__}: {err}")
@@ -170,6 +180,11 @@ class TTS(commands.Cog):
                 os.unlink(tmp_path)
             except Exception:
                 pass
+            if playback_result:
+                def resolve_playback():
+                    if not playback_result.done():
+                        playback_result.set_result(err is None)
+                loop.call_soon_threadsafe(resolve_playback)
 
         try:
             if voice_client.is_playing():
@@ -177,8 +192,22 @@ class TTS(commands.Cog):
             source = await discord.FFmpegOpusAudio.from_probe(tmp_path)
             voice_client.play(source, after=after)
             print(f"[TTS] 재생 시작: {text[:30]}")
+            if playback_result:
+                try:
+                    return await asyncio.wait_for(playback_result, timeout=120)
+                except asyncio.TimeoutError:
+                    if voice_client.is_playing():
+                        voice_client.stop()
+                    print("[TTS] 웹 재생 완료 대기 시간 초과")
+                    return False
+            return True
         except Exception as e:
             print(f"[TTS] 재생 시작 실패: {type(e).__name__}: {e}")
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            return False
 
     async def _restart(self, message: discord.Message) -> None:
         if message.guild and message.guild.voice_client:

@@ -6,6 +6,7 @@ import discord
 from discord.ext import commands
 
 scores: dict[int, int] = {}
+score_names: dict[int, str] = {}
 
 
 class Minigame(commands.Cog):
@@ -75,6 +76,7 @@ class Minigame(commands.Cog):
                 del self.guess_games[ch]
                 uid = message.author.id
                 scores[uid] = scores.get(uid, 0) + 10
+                score_names[uid] = getattr(message.author, "display_name", None) or message.author.name
                 await message.channel.send(f"🎉 {message.author.mention} 정답 **{secret}**! (+10점)")
 
         elif head.startswith("경마"):
@@ -171,9 +173,11 @@ class Minigame(commands.Cog):
         manual = [a for a in args if a]
         session = {
             "author": message.author.id,
+            "author_ref": getattr(message.author, "actor_ref", f"discord:{message.author.id}"),
             "n": n,
             "participants": set(manual),
             "msg_id": None,
+            "message": None,
         }
 
         embed = discord.Embed(
@@ -188,12 +192,16 @@ class Minigame(commands.Cog):
         await msg.add_reaction("📥")
         await msg.add_reaction("📤")
         session["msg_id"] = msg.id
+        session["message"] = msg
         self.lottery_sessions[msg.id] = session
 
-        # 5분 타임아웃
+        # 5분 타임아웃은 백그라운드에서 처리해 웹/Discord 명령 응답을 막지 않는다.
+        asyncio.create_task(self._expire_lottery(msg.id))
+
+    async def _expire_lottery(self, msg_id: int) -> None:
         await asyncio.sleep(300)
-        if msg.id in self.lottery_sessions:
-            del self.lottery_sessions[msg.id]
+        if msg_id in self.lottery_sessions:
+            del self.lottery_sessions[msg_id]
 
     @commands.Cog.listener()
     async def on_reaction_add(self, reaction: discord.Reaction, user: discord.User):
@@ -209,19 +217,35 @@ class Minigame(commands.Cog):
             session["participants"].add(user.display_name)
 
         elif str(reaction.emoji) == "📤" and user.id == session["author"]:
-            del self.lottery_sessions[msg_id]
-            participants = list(session["participants"])
-            if not participants:
-                await reaction.message.channel.send("참여자가 없습니다.")
-                return
+            await self.finish_lottery(msg_id, f"discord:{user.id}", reaction.message.channel)
+
+    async def finish_lottery(self, msg_id: int, actor_ref: str, output_channel=None) -> discord.Embed | str:
+        """웹 또는 Discord에서 시작한 뽑기를 동일한 세션 규칙으로 종료한다."""
+        session = self.lottery_sessions.get(msg_id)
+        if not session:
+            return "진행 중인 뽑기가 없습니다."
+        if session["author_ref"] != actor_ref:
+            return "뽑기를 시작한 사용자만 추첨할 수 있습니다."
+
+        del self.lottery_sessions[msg_id]
+        participants = list(session["participants"])
+        if not participants:
+            result: discord.Embed | str = "참여자가 없습니다."
+        else:
             n = min(session["n"], len(participants))
             winners = random.sample(participants, n)
-            embed = discord.Embed(
+            result = discord.Embed(
                 title=f"🎉 뽑기 결과 ({n}명)",
                 description="\n".join(f"🏆 {w}" for w in winners),
                 color=0x57F287,
             )
-            await reaction.message.channel.send(embed=embed)
+
+        channel = output_channel or session["message"].channel
+        if isinstance(result, str):
+            await channel.send(result)
+        else:
+            await channel.send(embed=result)
+        return result
 
     # ── 랭킹 ──────────────────────────────────────────────
 
@@ -233,7 +257,7 @@ class Minigame(commands.Cog):
         embed = discord.Embed(title="🏆 미니게임 랭킹 TOP 10", color=0xF59E0B)
         for i, (uid, score) in enumerate(top, 1):
             member = message.guild.get_member(uid)
-            name = member.display_name if member else f"유저({uid})"
+            name = member.display_name if member else score_names.get(uid, f"유저({uid})")
             embed.add_field(name=f"{i}위 {name}", value=f"{score}점", inline=False)
         await message.channel.send(embed=embed)
 
