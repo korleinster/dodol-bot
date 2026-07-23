@@ -1,10 +1,15 @@
+import hashlib
+import hmac
+import json
 import sqlite3
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qsl, urlsplit
 from unittest.mock import AsyncMock
 
 from aiohttp import web
@@ -85,6 +90,223 @@ class WebTtsResultTest(unittest.IsolatedAsyncioTestCase):
             content="v 테스트",
         )
         await cog.on_message(message)
+
+
+class _FakeEmbed:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def to_dict(self):
+        return self.payload
+
+
+class _FakeMessage:
+    def __init__(
+        self, *, message_id=1, guild_id=100, channel_id=200, author_id=999,
+        content="안녕 <@123>", edited_at=None, embeds=None, attachments=None, components=None,
+    ):
+        self.id = message_id
+        self.guild = SimpleNamespace(id=guild_id) if guild_id is not None else None
+        self.channel = SimpleNamespace(id=channel_id)
+        self.author = SimpleNamespace(id=author_id)
+        self.clean_content = content
+        self.content = content
+        self.edited_at = edited_at
+        self.embeds = embeds or []
+        self.attachments = attachments or []
+        self.components = components or []
+
+
+class _FakeBridgeRequest:
+    def __init__(self, path_qs, headers):
+        parsed = urlsplit(path_qs)
+        self.path_qs = path_qs
+        self.method = "GET"
+        self.headers = headers
+        self.query = dict(parse_qsl(parsed.query))
+
+    async def read(self):
+        return b""
+
+
+class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.previous_path = db_module.DB_PATH
+        self.tmp = tempfile.TemporaryDirectory()
+        db_module.DB_PATH = Path(self.tmp.name) / "bot.db"
+        await db_module.init_db()
+        async with db_module.get_db() as db:
+            await db.execute(
+                "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?, ?, ?)",
+                (100, 3, 200),
+            )
+            await db.execute(
+                "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?, ?, ?)",
+                (101, 3, 201),
+            )
+            await db.commit()
+        self.bot = SimpleNamespace(bot_number=3, user=SimpleNamespace(id=999))
+        self.bridge = WebBridge(self.bot, "b" * 32, Path(self.tmp.name) / "bridge.sock")
+
+    async def asyncTearDown(self):
+        db_module.DB_PATH = self.previous_path
+        self.tmp.cleanup()
+
+    async def test_filters_to_003_own_configured_guild_channel(self):
+        await self.bridge._on_broadcast_message(_FakeMessage(message_id=1))
+        await self.bridge._on_broadcast_message(_FakeMessage(message_id=2, author_id=998))
+        await self.bridge._on_broadcast_message(_FakeMessage(message_id=3, channel_id=201))
+        await self.bridge._on_broadcast_message(_FakeMessage(message_id=4, guild_id=None))
+
+        events, cursor = await db_module.list_web_broadcast_events(guild_id=100)
+        self.assertEqual(cursor, events[-1]["cursor"])
+        self.assertEqual([event["messageId"] for event in events], ["1"])
+        self.assertEqual(events[0]["content"], "안녕 <@123>")
+
+    async def test_create_update_delete_are_deduplicated_and_preserve_message_id(self):
+        created = _FakeMessage(
+            message_id=10,
+            embeds=[_FakeEmbed({
+                "title": "제목", "description": "내용", "color": 123,
+                "fields": [{"name": "보스", "value": "안타라스"}],
+                "footer": {"text": "003"}, "url": "https://example.test",
+                "image": {"url": "https://example.test/image.png"},
+                "thumbnail": {"url": "https://example.test/thumb.png"},
+                "author": {"name": "뚠뚠봇"},
+            })],
+        )
+        await self.bridge._on_broadcast_message(created)
+        await self.bridge._on_broadcast_message(created)
+        updated = _FakeMessage(
+            message_id=10, content="수정됨", edited_at=SimpleNamespace(isoformat=lambda: "2026-07-23T01:02:03+00:00"),
+        )
+        await self.bridge._on_broadcast_message_edit(created, updated)
+        await self.bridge._on_broadcast_message_edit(created, updated)
+        await self.bridge._on_broadcast_message_delete(updated)
+        await self.bridge._on_broadcast_message_delete(updated)
+        await self.bridge._on_raw_broadcast_message_delete(
+            SimpleNamespace(guild_id=100, channel_id=200, message_id=10),
+        )
+
+        events, _ = await db_module.list_web_broadcast_events(guild_id=100, limit=10)
+        self.assertEqual([event["kind"] for event in events], ["message", "message_update", "message_delete"])
+        self.assertTrue(all(event["messageId"] == "10" for event in events))
+        self.assertEqual(events[0]["embeds"][0]["imageUrl"], "https://example.test/image.png")
+        self.assertEqual(events[1]["content"], "수정됨")
+        self.assertIsNone(events[2]["content"])
+        self.assertEqual(events[2]["embeds"], [])
+
+    async def test_raw_delete_only_tombstones_a_previously_mirrored_bot_message(self):
+        await self.bridge._on_raw_broadcast_message_delete(
+            SimpleNamespace(guild_id=100, channel_id=200, message_id=88),
+        )
+        await self.bridge._on_broadcast_message(_FakeMessage(message_id=88))
+        await self.bridge._on_raw_broadcast_message_delete(
+            SimpleNamespace(guild_id=100, channel_id=200, message_id=88),
+        )
+        await self.bridge._on_raw_broadcast_message_delete(
+            SimpleNamespace(guild_id=100, channel_id=201, message_id=88),
+        )
+        events, _ = await db_module.list_web_broadcast_events(guild_id=100)
+        self.assertEqual([event["kind"] for event in events], ["message", "message_delete"])
+
+    async def test_guild_cursor_limit_and_channel_isolation(self):
+        for message_id in range(1, 4):
+            await self.bridge._on_broadcast_message(_FakeMessage(message_id=message_id))
+        await self.bridge._on_broadcast_message(
+            _FakeMessage(message_id=4, guild_id=101, channel_id=201),
+        )
+        initial, initial_cursor = await db_module.list_web_broadcast_events(guild_id=100, limit=2)
+        self.assertEqual([item["messageId"] for item in initial], ["2", "3"])
+        self.assertEqual(initial_cursor, initial[-1]["cursor"])
+        later, next_cursor = await db_module.list_web_broadcast_events(
+            guild_id=100, after=initial[0]["cursor"], limit=10,
+        )
+        self.assertEqual([item["messageId"] for item in later], ["3"])
+        self.assertEqual(next_cursor, later[-1]["cursor"])
+        other, _ = await db_module.list_web_broadcast_events(guild_id=101)
+        self.assertEqual([item["messageId"] for item in other], ["4"])
+
+    async def test_retention_excludes_expired_rows_and_caps_each_guild(self):
+        expired_at = int(time.time() * 1000) - db_module.WEB_BROADCAST_RETENTION_MS - 1
+        await db_module.append_web_broadcast_event(
+            event_key="expired",
+            guild_id=100,
+            channel_id=200,
+            message_id=9000,
+            kind="message",
+            content="expired",
+            embeds=[],
+            attachments=[],
+            components=[],
+            created_at=expired_at,
+        )
+        for message_id in range(1000, 1501):
+            await db_module.append_web_broadcast_event(
+                event_key=f"retained:{message_id}",
+                guild_id=100,
+                channel_id=200,
+                message_id=message_id,
+                kind="message",
+                content=str(message_id),
+                embeds=[],
+                attachments=[],
+                components=[],
+            )
+
+        events, _ = await db_module.list_web_broadcast_events(
+            guild_id=100,
+            channel_id=200,
+            limit=db_module.WEB_BROADCAST_MAX_EVENTS_PER_GUILD,
+        )
+        self.assertEqual(len(events), db_module.WEB_BROADCAST_MAX_EVENTS_PER_GUILD)
+        self.assertEqual(events[0]["messageId"], "1001")
+        self.assertEqual(events[-1]["messageId"], "1500")
+        self.assertNotIn("9000", {event["messageId"] for event in events})
+
+    async def test_003_only_listener_registration_and_capture(self):
+        calls = []
+        bot = SimpleNamespace(
+            bot_number=1,
+            user=SimpleNamespace(id=999),
+            add_listener=lambda *args: calls.append(args),
+            remove_listener=lambda *args: calls.append(args),
+        )
+        bridge = WebBridge(bot, "b" * 32, Path(self.tmp.name) / "unused.sock")
+        bridge._register_broadcast_listeners()
+        await bridge._on_broadcast_message(_FakeMessage(message_id=33))
+        events, _ = await db_module.list_web_broadcast_events(guild_id=100)
+        self.assertEqual(calls, [])
+        self.assertEqual(events, [])
+
+    async def test_hmac_broadcast_endpoint_binds_query_and_returns_contract(self):
+        await self.bridge._on_broadcast_message(_FakeMessage(message_id=50))
+        path = "/internal/v1/broadcast-events?guildId=100&after=0&limit=10"
+        timestamp = str(int(time.time()))
+        nonce = "n" * 16
+        body_hash = hashlib.sha256(b"").hexdigest()
+        canonical = "\n".join((timestamp, nonce, "GET", path, body_hash)).encode("utf-8")
+        signature = hmac.new(b"b" * 32, canonical, hashlib.sha256).hexdigest()
+        response = await self.bridge.broadcast_events(_FakeBridgeRequest(path, {
+            "x-lc-timestamp": timestamp,
+            "x-lc-nonce": nonce,
+            "x-lc-signature": signature,
+        }))
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual([event["messageId"] for event in payload["events"]], ["50"])
+        self.assertEqual(payload["nextCursor"], payload["events"][-1]["cursor"])
+
+        # A signature for guild 100 cannot be replayed against a new query.
+        with self.assertRaises(web.HTTPUnauthorized):
+            await self.bridge.broadcast_events(_FakeBridgeRequest(
+                "/internal/v1/broadcast-events?guildId=101&after=0&limit=10",
+                {
+                    "x-lc-timestamp": timestamp,
+                    "x-lc-nonce": "m" * 16,
+                    "x-lc-signature": signature,
+                },
+            ))
 
 
 if __name__ == "__main__":
