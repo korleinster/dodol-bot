@@ -148,6 +148,13 @@ guest. Process restart, bot summon, channel settings, logs, deployment, and
 container controls remain owner-only and are rejected by the bridge. TTS text
 is limited to 200 characters with at most three pending web jobs.
 
+Bot 003 also mirrors every message it authors in its configured Discord text
+channel to authenticated web guests for that guild. The feed includes automatic
+alerts, command replies, utilities, games, lifecycle notices, message edits,
+and deletes. It excludes human messages, other bots, DMs, and non-configured
+channels. The additive event log keeps up to 24 hours and 500 events per guild;
+the authenticated cursor endpoint replays at most 100 events per request.
+
 Builds may contain the shared bridge code, but the pilot deployment recreates
 only `dodol-bot-003`:
 

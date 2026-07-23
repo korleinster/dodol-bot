@@ -1,4 +1,8 @@
+from __future__ import annotations
+
+import json
 import os
+import time
 import aiosqlite
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -58,7 +62,32 @@ CREATE TABLE IF NOT EXISTS contributions (
     boss_name    TEXT    NOT NULL,
     cut_at       TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+-- 003번 봇이 연결된 Discord 채널에 직접 발화한 내용을 웹 포털에
+-- 안전하게 중계하기 위한 append-only 이벤트 로그다. 다른 봇도 같은 DB를
+-- 초기화하지만, 실제 기록은 web_bridge가 003에서만 수행한다.
+CREATE TABLE IF NOT EXISTS web_broadcast_event (
+    cursor           INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key        TEXT    NOT NULL UNIQUE,
+    guild_id         INTEGER NOT NULL,
+    channel_id       INTEGER NOT NULL,
+    message_id       INTEGER NOT NULL,
+    kind             TEXT    NOT NULL CHECK (kind IN ('message', 'message_update', 'message_delete')),
+    content          TEXT,
+    embeds_json      TEXT    NOT NULL DEFAULT '[]',
+    attachments_json TEXT    NOT NULL DEFAULT '[]',
+    components_json  TEXT    NOT NULL DEFAULT '[]',
+    created_at       INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_broadcast_event_guild_cursor
+    ON web_broadcast_event (guild_id, cursor);
+CREATE INDEX IF NOT EXISTS idx_web_broadcast_event_created_at
+    ON web_broadcast_event (created_at);
 """
+
+WEB_BROADCAST_RETENTION_MS = 24 * 60 * 60 * 1000
+WEB_BROADCAST_MAX_EVENTS_PER_GUILD = 500
 
 # 구 이름 → 신 이름 (기존 DB 마이그레이션용)
 _BOSS_RENAMES: dict[str, str] = {
@@ -227,3 +256,147 @@ async def get_db():
         db.row_factory = aiosqlite.Row
         await db.execute("PRAGMA busy_timeout=5000")
         yield db
+
+
+def _broadcast_json(value: object) -> str:
+    """Serialize bridge payloads consistently before storing them in SQLite."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _decode_broadcast_json(value: str | None, fallback: object) -> object:
+    try:
+        return json.loads(value or "")
+    except (TypeError, json.JSONDecodeError):
+        # A malformed legacy row must not make the whole guest feed unavailable.
+        return fallback
+
+
+async def append_web_broadcast_event(
+    *,
+    event_key: str,
+    guild_id: int,
+    channel_id: int,
+    message_id: int,
+    kind: str,
+    content: str | None,
+    embeds: list[dict],
+    attachments: list[dict],
+    components: list[dict],
+    created_at: int | None = None,
+) -> int:
+    """Persist one 003 broadcast event and return its stable cursor.
+
+    ``event_key`` is derived from Discord's message identity/revision, so a
+    duplicate gateway delivery returns the cursor already assigned to the
+    original event rather than creating a second client-visible item.
+    """
+    if kind not in {"message", "message_update", "message_delete"}:
+        raise ValueError("invalid broadcast event kind")
+    created_at = int(created_at if created_at is not None else time.time() * 1000)
+    async with get_db() as db:
+        await db.execute(
+            """INSERT OR IGNORE INTO web_broadcast_event
+               (event_key, guild_id, channel_id, message_id, kind, content,
+                embeds_json, attachments_json, components_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                event_key,
+                guild_id,
+                channel_id,
+                message_id,
+                kind,
+                content,
+                _broadcast_json(embeds),
+                _broadcast_json(attachments),
+                _broadcast_json(components),
+                created_at,
+            ),
+        )
+        async with db.execute(
+            "SELECT cursor FROM web_broadcast_event WHERE event_key=?", (event_key,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:  # pragma: no cover - protects a corrupted concurrent DB only
+            raise RuntimeError("broadcast event was not persisted")
+
+        # Keep the shared bot DB bounded. Events are append-only, so trimming
+        # other guilds here is safe and keeps the retention policy deterministic.
+        cutoff = int(time.time() * 1000) - WEB_BROADCAST_RETENTION_MS
+        await db.execute("DELETE FROM web_broadcast_event WHERE created_at < ?", (cutoff,))
+        await db.execute(
+            """DELETE FROM web_broadcast_event
+               WHERE guild_id=? AND cursor NOT IN (
+                 SELECT cursor FROM web_broadcast_event
+                 WHERE guild_id=? ORDER BY cursor DESC LIMIT ?
+               )""",
+            (guild_id, guild_id, WEB_BROADCAST_MAX_EVENTS_PER_GUILD),
+        )
+        await db.commit()
+        return int(row["cursor"])
+
+
+async def list_web_broadcast_events(
+    *, guild_id: int, after: int = 0, limit: int = 100, channel_id: int | None = None,
+) -> tuple[list[dict], int]:
+    """Return a guild-scoped, cursor-ordered slice of the retained feed."""
+    if after < 0:
+        raise ValueError("after must not be negative")
+    if not 1 <= limit <= WEB_BROADCAST_MAX_EVENTS_PER_GUILD:
+        raise ValueError(f"limit must be 1-{WEB_BROADCAST_MAX_EVENTS_PER_GUILD}")
+
+    async with get_db() as db:
+        # Reads enforce retention too, so a quiet guild cannot expose stale rows
+        # that have not yet had a subsequent insert to trigger cleanup.
+        where = "guild_id=? AND created_at>=?"
+        base_params: tuple[int, ...] = (
+            guild_id,
+            int(time.time() * 1000) - WEB_BROADCAST_RETENTION_MS,
+        )
+        if channel_id is not None:
+            where += " AND channel_id=?"
+            base_params += (channel_id,)
+        if after == 0:
+            query = f"""SELECT * FROM (
+                SELECT * FROM web_broadcast_event
+                WHERE {where} ORDER BY cursor DESC LIMIT ?
+            ) ORDER BY cursor ASC"""
+            params = base_params + (limit,)
+        else:
+            query = f"""SELECT * FROM web_broadcast_event
+                       WHERE {where} AND cursor>? ORDER BY cursor ASC LIMIT ?"""
+            params = base_params + (after, limit)
+        async with db.execute(query, params) as cur:
+            rows = await cur.fetchall()
+
+    events = [
+        {
+            "cursor": int(row["cursor"]),
+            "messageId": str(row["message_id"]),
+            "kind": row["kind"],
+            "guildId": str(row["guild_id"]),
+            "channelId": str(row["channel_id"]),
+            "content": row["content"],
+            "embeds": _decode_broadcast_json(row["embeds_json"], []),
+            "attachments": _decode_broadcast_json(row["attachments_json"], []),
+            "components": _decode_broadcast_json(row["components_json"], []),
+            "createdAt": int(row["created_at"]),
+        }
+        for row in rows
+    ]
+    next_cursor = int(events[-1]["cursor"]) if events else after
+    return events, next_cursor
+
+
+async def has_web_broadcast_message(
+    *, guild_id: int, channel_id: int, message_id: int,
+) -> bool:
+    """Whether a prior mirrored message can safely receive a raw-delete tombstone."""
+    async with get_db() as db:
+        async with db.execute(
+            """SELECT 1 FROM web_broadcast_event
+               WHERE guild_id=? AND channel_id=? AND message_id=?
+                 AND kind IN ('message', 'message_update')
+               LIMIT 1""",
+            (guild_id, channel_id, message_id),
+        ) as cur:
+            return await cur.fetchone() is not None

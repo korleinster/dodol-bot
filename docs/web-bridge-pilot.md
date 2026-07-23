@@ -40,6 +40,27 @@ Contributions retain the legacy `user_id` field while recording additive
 - Ranking names prefer the stored web display name when no Discord member
   exists for a negative actor ID.
 
+## Bot-authored channel feed
+
+When the bridge starts on bot 003 it registers Discord message, edit, delete,
+and raw-delete listeners. A message is mirrored only when all of these are true:
+
+- the author is the running bot-003 Discord identity;
+- the guild exists in `guild_config` for bot 003;
+- the message channel is that row's configured `text_channel_id`.
+
+The feed therefore includes scheduler alerts, arbitrary reservation notices,
+Discord- and web-originated command replies, utilities, mini-games, errors, and
+bot lifecycle notices. It excludes human messages, other bots, DMs, and other
+channels. Raw deletes create a tombstone only when the message was previously
+mirrored, so an uncached delete cannot reveal or remove an unrelated message.
+
+`web_broadcast_event` is an additive, append-only cursor log. Duplicate gateway
+deliveries share an event key. Retention is limited to 24 hours and the latest
+500 events per guild. `GET /internal/v1/broadcast-events` is HMAC authenticated,
+binds its query string into the signature, filters by the current configured
+channel, and returns at most 100 events in ascending cursor order.
+
 ## Deployment boundary
 
 Building the shared image does not authorize recreating every service. After
@@ -61,8 +82,11 @@ the pilot deployment; they must remain unchanged.
    execution.
 5. Run TTS, dice, number game, race, and lottery from web and confirm Discord
    output and web events agree.
-6. Verify process commands are rejected.
-7. Stop only the 003 bridge/container and confirm the other bots continue.
+6. Trigger bot speech from Discord, a scheduler, and a web command; confirm one
+   web card per Discord message and confirm edits/deletes converge.
+7. Verify human, other-bot, DM, and other-channel messages are not mirrored.
+8. Verify process commands are rejected.
+9. Stop only the 003 bridge/container and confirm the other bots continue.
 
 ## Recovery
 

@@ -16,7 +16,12 @@ from typing import Any
 import discord
 from aiohttp import web
 
-from src.db import get_db
+from src.db import (
+    append_web_broadcast_event,
+    get_db,
+    has_web_broadcast_message,
+    list_web_broadcast_events,
+)
 
 
 BRIDGE_VERSION = 1
@@ -49,7 +54,79 @@ def _embed_json(embed: discord.Embed | None) -> dict[str, Any] | None:
         "color": raw.get("color"),
         "fields": raw.get("fields", []),
         "footer": raw.get("footer"),
+        "url": raw.get("url"),
+        "imageUrl": (raw.get("image") or {}).get("url"),
+        "thumbnailUrl": (raw.get("thumbnail") or {}).get("url"),
+        "author": raw.get("author"),
     }
+
+
+def _message_embeds(message: discord.Message) -> list[dict[str, Any]]:
+    return [item for embed in message.embeds if (item := _embed_json(embed)) is not None]
+
+
+def _message_attachments(message: discord.Message) -> list[dict[str, Any]]:
+    return [
+        {
+            "filename": attachment.filename,
+            "url": attachment.url,
+            "contentType": attachment.content_type,
+            "size": attachment.size,
+        }
+        for attachment in message.attachments
+    ]
+
+
+def _component_type(component: Any) -> int:
+    value = getattr(component, "type", 0)
+    try:
+        return int(getattr(value, "value", value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _message_components(message: discord.Message) -> list[dict[str, Any]]:
+    """Flatten Discord action rows into the guest feed's safe, read-only shape."""
+    result: list[dict[str, Any]] = []
+    for row in getattr(message, "components", ()) or ():
+        children = getattr(row, "children", None)
+        for component in children if children is not None else (row,):
+            result.append({
+                "label": getattr(component, "label", None),
+                "customId": getattr(component, "custom_id", None),
+                "type": _component_type(component),
+            })
+    return result
+
+
+def _message_content(message: discord.Message) -> str:
+    # clean_content resolves mentions without exposing raw Discord mention IDs.
+    content = getattr(message, "clean_content", None)
+    if content is None:
+        content = getattr(message, "content", "")
+    return str(content)
+
+
+def _event_key(
+    *, message_id: int, kind: str, content: str | None = None,
+    embeds: list[dict[str, Any]] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+    components: list[dict[str, Any]] | None = None,
+    edited_at: Any = None,
+) -> str:
+    """Derive an idempotency key from Discord's stable message/revision data."""
+    if kind in {"message", "message_delete"}:
+        return f"{kind}:{message_id}"
+    revision = getattr(edited_at, "isoformat", lambda: None)()
+    if revision:
+        return f"{kind}:{message_id}:{revision}"
+    payload = json.dumps(
+        [content, embeds or [], attachments or [], components or []],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"{kind}:{message_id}:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
 
 @dataclass
@@ -168,6 +245,13 @@ class WebBridge:
         self.runner: web.AppRunner | None = None
         self.tts_lock = asyncio.Lock()
         self.tts_pending = 0
+        self._broadcast_listeners_registered = False
+        # Keep the exact bound-method instances so discord.py can reliably
+        # unregister them when 003 shuts down or reconnects during a deploy.
+        self._broadcast_message_listener = self._on_broadcast_message
+        self._broadcast_edit_listener = self._on_broadcast_message_edit
+        self._broadcast_delete_listener = self._on_broadcast_message_delete
+        self._broadcast_raw_delete_listener = self._on_raw_broadcast_message_delete
 
     async def _authenticate(self, request: web.Request) -> bytes:
         body = await request.read()
@@ -187,7 +271,10 @@ class WebBridge:
         if not nonce or nonce in self.nonces:
             raise web.HTTPConflict(text="bridge nonce already used")
         body_hash = hashlib.sha256(body).hexdigest()
-        canonical = "\n".join((timestamp, nonce, request.method, request.path, body_hash)).encode("utf-8")
+        # The broadcast read endpoint is query-based. Including its query string
+        # prevents a valid HMAC for one guild/cursor from being replayed against
+        # a different slice. Existing endpoints have no query and stay unchanged.
+        canonical = "\n".join((timestamp, nonce, request.method, request.path_qs, body_hash)).encode("utf-8")
         expected = hmac.new(self.secret, canonical, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, signature):
             raise web.HTTPUnauthorized(text="invalid bridge signature")
@@ -235,6 +322,173 @@ class WebBridge:
                 "voiceChannelId": str(voice_id) if voice_id else None,
             })
         return web.json_response({"targets": targets})
+
+    async def broadcast_events(self, request: web.Request) -> web.Response:
+        """Return the retained 003-only bot-message feed for one guild."""
+        await self._authenticate(request)
+        guild_id_raw = request.query.get("guildId", "")
+        after_raw = request.query.get("after", "0")
+        limit_raw = request.query.get("limit", "100")
+        try:
+            guild_id = int(guild_id_raw)
+            after = int(after_raw)
+            limit = int(limit_raw)
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text="invalid broadcast event cursor") from exc
+        if guild_id <= 0 or after < 0:
+            raise web.HTTPBadRequest(text="invalid broadcast event cursor")
+        channel_id = await self._configured_broadcast_channel(guild_id)
+        if channel_id is None:
+            return web.json_response({"events": [], "nextCursor": after})
+        try:
+            events, next_cursor = await list_web_broadcast_events(
+                guild_id=guild_id, channel_id=channel_id, after=after, limit=limit,
+            )
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+        return web.json_response({"events": events, "nextCursor": next_cursor})
+
+    async def _configured_broadcast_channel(self, guild_id: int) -> int | None:
+        """Resolve the only Discord channel whose bot speech may be mirrored."""
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT text_channel_id FROM guild_config WHERE guild_id=? AND bot_number=?",
+                (guild_id, 3),
+            ) as cur:
+                row = await cur.fetchone()
+        return int(row["text_channel_id"]) if row and row["text_channel_id"] else None
+
+    async def _is_broadcast_message(self, message: discord.Message) -> bool:
+        if getattr(self.bot, "bot_number", None) != 3:
+            return False
+        guild = getattr(message, "guild", None)
+        author = getattr(message, "author", None)
+        bot_user = getattr(self.bot, "user", None)
+        channel = getattr(message, "channel", None)
+        if not guild or not author or not bot_user or not channel:
+            return False
+        if getattr(author, "id", None) != getattr(bot_user, "id", None):
+            return False
+        configured_channel = await self._configured_broadcast_channel(int(guild.id))
+        return configured_channel is not None and configured_channel == int(channel.id)
+
+    async def _store_broadcast_message(self, message: discord.Message, kind: str) -> None:
+        if not await self._is_broadcast_message(message):
+            return
+        guild_id = int(message.guild.id)
+        channel_id = int(message.channel.id)
+        message_id = int(message.id)
+        if kind == "message_delete":
+            await append_web_broadcast_event(
+                event_key=_event_key(message_id=message_id, kind=kind),
+                guild_id=guild_id,
+                channel_id=channel_id,
+                message_id=message_id,
+                kind=kind,
+                content=None,
+                embeds=[],
+                attachments=[],
+                components=[],
+            )
+            return
+
+        content = _message_content(message)
+        embeds = _message_embeds(message)
+        attachments = _message_attachments(message)
+        components = _message_components(message)
+        await append_web_broadcast_event(
+            event_key=_event_key(
+                message_id=message_id,
+                kind=kind,
+                content=content,
+                embeds=embeds,
+                attachments=attachments,
+                components=components,
+                edited_at=getattr(message, "edited_at", None),
+            ),
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            kind=kind,
+            content=content,
+            embeds=embeds,
+            attachments=attachments,
+            components=components,
+        )
+
+    async def _capture_broadcast(self, message: discord.Message, kind: str) -> None:
+        try:
+            await self._store_broadcast_message(message, kind)
+        except Exception as exc:
+            # Message delivery must never be interrupted by a best-effort web
+            # mirror. Avoid outputting event content, HMAC material, or DB paths.
+            print(f"[web-bridge] broadcast capture failed ({type(exc).__name__})")
+
+    async def _on_broadcast_message(self, message: discord.Message) -> None:
+        await self._capture_broadcast(message, "message")
+
+    async def _on_broadcast_message_edit(
+        self, _before: discord.Message, after: discord.Message,
+    ) -> None:
+        await self._capture_broadcast(after, "message_update")
+
+    async def _on_broadcast_message_delete(self, message: discord.Message) -> None:
+        await self._capture_broadcast(message, "message_delete")
+
+    async def _on_raw_broadcast_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
+        """Mirror deletes even after Discord evicts the message from its cache.
+
+        Raw delete events do not include an author. We only emit a tombstone for
+        a message that this 003 bridge had already mirrored from its configured
+        channel, which keeps human and other-bot deletes out of the web feed.
+        """
+        try:
+            if getattr(self.bot, "bot_number", None) != 3:
+                return
+            guild_id = getattr(payload, "guild_id", None)
+            channel_id = getattr(payload, "channel_id", None)
+            message_id = getattr(payload, "message_id", None)
+            if guild_id is None or channel_id is None or message_id is None:
+                return
+            guild_id, channel_id, message_id = int(guild_id), int(channel_id), int(message_id)
+            configured_channel = await self._configured_broadcast_channel(guild_id)
+            if configured_channel != channel_id:
+                return
+            if not await has_web_broadcast_message(
+                guild_id=guild_id, channel_id=channel_id, message_id=message_id,
+            ):
+                return
+            await append_web_broadcast_event(
+                event_key=_event_key(message_id=message_id, kind="message_delete"),
+                guild_id=guild_id,
+                channel_id=channel_id,
+                message_id=message_id,
+                kind="message_delete",
+                content=None,
+                embeds=[],
+                attachments=[],
+                components=[],
+            )
+        except Exception as exc:
+            print(f"[web-bridge] raw broadcast delete capture failed ({type(exc).__name__})")
+
+    def _register_broadcast_listeners(self) -> None:
+        if self._broadcast_listeners_registered or getattr(self.bot, "bot_number", None) != 3:
+            return
+        self.bot.add_listener(self._broadcast_message_listener, "on_message")
+        self.bot.add_listener(self._broadcast_edit_listener, "on_message_edit")
+        self.bot.add_listener(self._broadcast_delete_listener, "on_message_delete")
+        self.bot.add_listener(self._broadcast_raw_delete_listener, "on_raw_message_delete")
+        self._broadcast_listeners_registered = True
+
+    def _remove_broadcast_listeners(self) -> None:
+        if not self._broadcast_listeners_registered:
+            return
+        self.bot.remove_listener(self._broadcast_message_listener, "on_message")
+        self.bot.remove_listener(self._broadcast_edit_listener, "on_message_edit")
+        self.bot.remove_listener(self._broadcast_delete_listener, "on_message_delete")
+        self.bot.remove_listener(self._broadcast_raw_delete_listener, "on_raw_message_delete")
+        self._broadcast_listeners_registered = False
 
     @staticmethod
     def _validate_command(command: str) -> None:
@@ -415,6 +669,7 @@ class WebBridge:
         app = web.Application(client_max_size=MAX_BODY_BYTES)
         app.router.add_get("/internal/v1/health", self.health)
         app.router.add_get("/internal/v1/targets", self.targets)
+        app.router.add_get("/internal/v1/broadcast-events", self.broadcast_events)
         app.router.add_post("/internal/v1/commands", self.create_command)
         app.router.add_get("/internal/v1/commands/{job_id}", self.get_command)
         app.router.add_post("/internal/v1/lottery/{message_id}/draw", self.draw_lottery)
@@ -428,9 +683,11 @@ class WebBridge:
         if bridge_gid:
             os.chown(self.socket_path, -1, int(bridge_gid))
         os.chmod(self.socket_path, 0o660)
+        self._register_broadcast_listeners()
         print(f"[web-bridge] bot 003 Unix socket ready: {self.socket_path}")
 
     async def close(self) -> None:
+        self._remove_broadcast_listeners()
         if self.runner:
             await self.runner.cleanup()
         if self.socket_path.exists():
