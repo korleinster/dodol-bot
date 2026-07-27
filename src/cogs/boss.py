@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 KST = timezone(timedelta(hours=9))
@@ -70,12 +71,16 @@ def now() -> datetime:
     return datetime.now(KST).replace(tzinfo=None)
 
 
-def next_fixed_occurrence(days_str: str, times_str: str) -> datetime | None:
+def next_fixed_occurrence(
+    days_str: str,
+    times_str: str,
+    reference: datetime | None = None,
+) -> datetime | None:
     """요일+시각 기반으로 다음 등장 시각 계산.
     days_str : "2" 또는 "0,1,2,3,4,5,6" (월=0, 일=6)
     times_str: "22:30" 또는 "12:00,20:00"
     """
-    n = now()
+    n = reference or now()
     days  = [int(d) for d in days_str.split(",")]
     times = [(int(t.split(":")[0]), int(t.split(":")[1])) for t in times_str.split(",")]
     candidates = []
@@ -186,12 +191,91 @@ class Boss(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.bn  = bot.bot_number
+        self._scheduler_error_key: str | None = None
+        self._scheduler_error_reported_at = 0.0
+        self._scheduler_bootstrapped = False
         self.check_schedules.start()
         self.cleanup_old_schedules.start()
 
     def cog_unload(self):
         self.check_schedules.cancel()
         self.cleanup_old_schedules.cancel()
+
+    def _scheduler_health(self) -> dict:
+        health = getattr(self.bot, "scheduler_health", None)
+        if not isinstance(health, dict):
+            health = {
+                "status": "starting",
+                "bootstrapCompletedAt": None,
+                "lastTickAt": None,
+                "errorCode": None,
+            }
+            self.bot.scheduler_health = health
+        return health
+
+    def _mark_scheduler_ready(self, *, bootstrap: bool = False) -> None:
+        timestamp = int(time.time() * 1000)
+        health = self._scheduler_health()
+        was_failed = health.get("status") == "failed"
+        health["errorCode"] = None
+        if bootstrap:
+            # Recovery is complete, but the first real notification tick still
+            # has to succeed before the scheduler can truthfully report ready.
+            health["status"] = "starting"
+            health["bootstrapCompletedAt"] = timestamp
+            health["lastTickAt"] = None
+            if was_failed:
+                self._scheduler_error_key = None
+                self._scheduler_error_reported_at = 0.0
+        else:
+            health["status"] = "ready"
+            health["lastTickAt"] = timestamp
+            if was_failed:
+                # A successful tick closes the incident. The same error in a
+                # later failed tick is a new outage and deserves one new alert.
+                self._scheduler_error_key = None
+                self._scheduler_error_reported_at = 0.0
+
+    async def _mark_scheduler_failed(
+        self,
+        error_code: str,
+        error: Exception,
+        *,
+        context: str,
+    ) -> None:
+        health = self._scheduler_health()
+        health["status"] = "failed"
+        health["errorCode"] = error_code
+
+        # 1초 루프에서 같은 장애가 반복되어도 Discord/Telegram을 도배하지 않는다.
+        error_key = error_code
+        current = time.monotonic()
+        if (
+            error_key == self._scheduler_error_key
+            and current - self._scheduler_error_reported_at < 300
+        ):
+            return
+
+        self._scheduler_error_key = error_key
+        self._scheduler_error_reported_at = current
+        print(
+            f"[뚠뚠봇{self.bn:03d}] {context} "
+            f"({error_code}, {type(error).__name__})"
+        )
+        from src.utils.notify import alert
+        try:
+            await alert(
+                self.bot,
+                self.bn,
+                f"{context} ({error_code}). 003 봇 상태와 스케줄러 로그를 확인해주세요.",
+            )
+        except Exception as alert_error:
+            # Monitoring failure must never turn a recoverable scheduler error
+            # into a stopped loop. Keep the message detail-free and observable.
+            print(
+                f"[뚠뚠봇{self.bn:03d}] 운영 알림 전송 실패 "
+                f"(SCHEDULER_ALERT_FAILED, {type(alert_error).__name__})"
+            )
 
     # ── 채널 가드 ─────────────────────────────────────────
 
@@ -957,17 +1041,41 @@ class Boss(commands.Cog):
 
     # ── 주기 체크: 알림 발송 ──────────────────────────────
 
+    async def _bootstrap_scheduler(self) -> bool:
+        if self._scheduler_bootstrapped:
+            return True
+        try:
+            stats = await self._recover_schedules(now())
+        except Exception as error:
+            await self._mark_scheduler_failed(
+                "SCHEDULER_BOOTSTRAP_FAILED",
+                error,
+                context="보스 알림 스케줄러 복구 실패",
+            )
+            return False
+
+        self._scheduler_bootstrapped = True
+        self._mark_scheduler_ready(bootstrap=True)
+        print(
+            f"[뚠뚠봇{self.bn:03d}] 재시작 복구 완료 — "
+            f"과거 {stats['expired']}건 정리, 일반 {stats['normalCreated']}건·"
+            f"고정 {stats['fixedCreated']}건 생성, 중복 {stats['duplicates']}건 제외"
+        )
+        return True
+
     @tasks.loop(seconds=1)
     async def check_schedules(self):
+        if not await self._bootstrap_scheduler():
+            return
         try:
             await self._check_schedules_inner()
+            self._mark_scheduler_ready()
         except Exception as e:
-            import traceback as _tb
-            msg = f"check_schedules 루프 예외 발생 (루프 유지 중)\n`{type(e).__name__}: {e}`"
-            print(f"[뚠뚠봇{self.bn:03d}] {msg}")
-            _tb.print_exc()
-            from src.utils.notify import alert
-            await alert(self.bot, self.bn, msg)
+            await self._mark_scheduler_failed(
+                "SCHEDULER_TICK_FAILED",
+                e,
+                context="보스 알림 스케줄러 실행 실패",
+            )
 
     async def _check_schedules_inner(self):
         n = now()
@@ -1000,6 +1108,15 @@ class Boss(commands.Cog):
             channel = self.bot.get_channel(r["text_channel_id"])
             if not channel:
                 continue
+            async with get_db() as db:
+                claimed = await db.execute(
+                    """UPDATE schedules SET warned_5min=1
+                       WHERE id=? AND notified=0 AND warned_5min=0""",
+                    (r["id"],),
+                )
+                await db.commit()
+                if claimed.rowcount != 1:
+                    continue
             at = datetime.fromisoformat(r["scheduled_at"])
             miss_str = f" (미입력×{r['miss_count']})" if r["miss_count"] else ""
             embed = discord.Embed(
@@ -1008,15 +1125,21 @@ class Boss(commands.Cog):
                 color=0xFEE75C,
             )
             await channel.send(embed=embed)
-            async with get_db() as db:
-                await db.execute("UPDATE schedules SET warned_5min=1 WHERE id=?", (r["id"],))
-                await db.commit()
 
         # ── 1분 전 경고 ───────────────────────────────────
         for r in rows_1min:
             channel = self.bot.get_channel(r["text_channel_id"])
             if not channel:
                 continue
+            async with get_db() as db:
+                claimed = await db.execute(
+                    """UPDATE schedules SET warned_5min=1, warned_1min=1
+                       WHERE id=? AND notified=0 AND warned_1min=0""",
+                    (r["id"],),
+                )
+                await db.commit()
+                if claimed.rowcount != 1:
+                    continue
             at = datetime.fromisoformat(r["scheduled_at"])
             miss_str = f" (미입력×{r['miss_count']})" if r["miss_count"] else ""
             embed = discord.Embed(
@@ -1025,17 +1148,25 @@ class Boss(commands.Cog):
                 color=0xFF8C00,
             )
             await channel.send(embed=embed)
-            async with get_db() as db:
-                await db.execute(
-                    "UPDATE schedules SET warned_5min=1, warned_1min=1 WHERE id=?", (r["id"],)
-                )
-                await db.commit()
 
         # ── 정각 알림 ─────────────────────────────────────
         for r in rows_final:
             channel = self.bot.get_channel(r["text_channel_id"])
             if not channel:
                 continue
+            # Claim before any external side effect. If Discord accepted a
+            # message but the client later raised, retrying next second could
+            # create an unbounded notification/TTS burst.
+            async with get_db() as db:
+                claimed = await db.execute(
+                    """UPDATE schedules
+                       SET warned_5min=1, warned_1min=1, notified=1
+                       WHERE id=? AND notified=0""",
+                    (r["id"],),
+                )
+                await db.commit()
+                if claimed.rowcount != 1:
+                    continue
             at = datetime.fromisoformat(r["scheduled_at"])
             remain = fmt_remain(at - n)
             miss_str = f"(미입력×{r['miss_count']}) " if r["miss_count"] else ""
@@ -1053,13 +1184,6 @@ class Boss(commands.Cog):
                     channel.guild,
                     f"{r['content']} {'미입력' * r['miss_count']} {remain}",
                 )
-
-            async with get_db() as db:
-                await db.execute(
-                    "UPDATE schedules SET warned_5min=1, warned_1min=1, notified=1 WHERE id=?",
-                    (r["id"],),
-                )
-                await db.commit()
 
         # ── 고정 일정 보스 자동 예약 생성 ────────────────
         async with get_db() as db:
@@ -1160,6 +1284,163 @@ class Boss(commands.Cog):
             if result.rowcount:
                 print(f"[뚠뚠봇{self.bn:03d}] 오래된 예약 {result.rowcount}건 정리 완료")
 
+    async def _recover_schedules(self, recovery_at: datetime) -> dict[str, int]:
+        """Restart-safe schedule reconciliation.
+
+        Past rows are acknowledged without sending Discord/TTS notifications.
+        Each configured boss keeps at most one due-or-future pending row. A
+        missing normal-boss row advances from its latest acknowledged spawn,
+        while a fixed boss gets its next configured future occurrence. Custom
+        reservations (boss_name IS NULL) are never regenerated.
+        """
+        # Schedule timestamps are second-granular. Flooring avoids treating an
+        # event in the current second as overdue merely because startup happened
+        # a few microseconds later.
+        recovery_at = recovery_at.replace(microsecond=0)
+        cutoff = recovery_at.isoformat()
+        stats = {
+            "expired": 0,
+            "normalCreated": 0,
+            "fixedCreated": 0,
+            "duplicates": 0,
+        }
+
+        async with get_db() as db:
+            expired = await db.execute(
+                "UPDATE schedules SET warned_5min=1, warned_1min=1, notified=1 "
+                "WHERE bot_number=? AND notified=0 AND scheduled_at < ?",
+                (self.bn, cutoff),
+            )
+            stats["expired"] = max(expired.rowcount, 0)
+
+            async with db.execute(
+                """SELECT b.guild_id, b.name, b.respawn_seconds, b.fixed,
+                          b.fixed_days, b.fixed_time
+                   FROM bosses b
+                   JOIN guild_config gc
+                     ON b.guild_id=gc.guild_id AND b.bot_number=gc.bot_number
+                   WHERE b.bot_number=?""",
+                (self.bn,),
+            ) as cur:
+                bosses = [dict(row) async for row in cur]
+
+            async with db.execute(
+                """SELECT id, guild_id, boss_name, scheduled_at
+                   FROM schedules
+                   WHERE bot_number=? AND notified=0
+                     AND boss_name IS NOT NULL AND scheduled_at>=?
+                   ORDER BY scheduled_at, id""",
+                (self.bn, cutoff),
+            ) as cur:
+                pending_rows = [dict(row) async for row in cur]
+
+            pending_by_boss: dict[tuple[int, str], list[dict]] = {}
+            for row in pending_rows:
+                pending_by_boss.setdefault(
+                    (row["guild_id"], row["boss_name"]),
+                    [],
+                ).append(row)
+
+            # Duplicate pending rows can otherwise produce duplicate Discord/TTS
+            # notifications. Keep the earliest (including exact-now) and remove
+            # only the conflicting extras. Marking a future duplicate notified
+            # would incorrectly turn a never-fired row into respawn history.
+            for rows in pending_by_boss.values():
+                for duplicate in rows[1:]:
+                    await db.execute(
+                        "DELETE FROM schedules WHERE id=?",
+                        (duplicate["id"],),
+                    )
+                    stats["duplicates"] += 1
+
+            async with db.execute(
+                """SELECT s.guild_id, s.boss_name, s.scheduled_at, s.miss_count
+                   FROM schedules s
+                   JOIN bosses b
+                     ON s.guild_id=b.guild_id
+                    AND s.bot_number=b.bot_number
+                    AND s.boss_name=b.name
+                   WHERE s.bot_number=? AND s.notified=1
+                     AND s.boss_name IS NOT NULL AND b.fixed=0
+                     AND s.scheduled_at<=?
+                   ORDER BY s.scheduled_at DESC, s.id DESC""",
+                (self.bn, cutoff),
+            ) as cur:
+                notified_rows = [dict(row) async for row in cur]
+
+            latest_notified: dict[tuple[int, str], dict] = {}
+            for row in notified_rows:
+                latest_notified.setdefault(
+                    (row["guild_id"], row["boss_name"]),
+                    row,
+                )
+
+            for boss in bosses:
+                key = (boss["guild_id"], boss["name"])
+                if pending_by_boss.get(key):
+                    # The earliest exact-now/future row is intentionally
+                    # preserved. The normal scheduler will handle exact-now.
+                    continue
+
+                if boss["fixed"]:
+                    if not boss["fixed_days"] or not boss["fixed_time"]:
+                        continue
+                    next_at = next_fixed_occurrence(
+                        boss["fixed_days"],
+                        boss["fixed_time"],
+                        recovery_at,
+                    )
+                    if next_at is None:
+                        continue
+                    await db.execute(
+                        """INSERT OR IGNORE INTO schedules
+                           (guild_id, bot_number, boss_name, content, scheduled_at, is_fixed)
+                           VALUES (?,?,?,?,?,1)""",
+                        (
+                            boss["guild_id"],
+                            self.bn,
+                            boss["name"],
+                            boss["name"],
+                            next_at.isoformat(),
+                        ),
+                    )
+                    stats["fixedCreated"] += 1
+                    continue
+
+                respawn_seconds = boss["respawn_seconds"]
+                previous = latest_notified.get(key)
+                if not respawn_seconds or previous is None:
+                    # No safe source timestamp exists. Guessing a spawn would be
+                    # worse than explicitly leaving this boss unscheduled.
+                    continue
+
+                new_at = (
+                    datetime.fromisoformat(previous["scheduled_at"])
+                    + timedelta(seconds=respawn_seconds)
+                )
+                new_miss = previous["miss_count"] + 1
+                while new_at <= recovery_at:
+                    new_at += timedelta(seconds=respawn_seconds)
+                    new_miss += 1
+                await db.execute(
+                    """INSERT INTO schedules
+                       (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
+                       VALUES (?,?,?,?,?,?)""",
+                    (
+                        boss["guild_id"],
+                        self.bn,
+                        boss["name"],
+                        boss["name"],
+                        new_at.isoformat(),
+                        new_miss,
+                    ),
+                )
+                stats["normalCreated"] += 1
+
+            await db.commit()
+
+        return stats
+
     @cleanup_old_schedules.before_loop
     async def before_cleanup(self):
         await self.bot.wait_until_ready()
@@ -1167,75 +1448,23 @@ class Boss(commands.Cog):
     @check_schedules.before_loop
     async def before_check(self):
         await self.bot.wait_until_ready()
-        # 재시작 시 이미 지나간 스케줄을 조용히 notified=1 처리 — 알림 폭탄 방지
-        n = now()
-        async with get_db() as db:
-            await db.execute(
-                "UPDATE schedules SET warned_5min=1, warned_1min=1, notified=1 "
-                "WHERE bot_number=? AND notified=0 AND scheduled_at < ?",
-                (self.bn, n.isoformat()),
-            )
-            await db.commit()
-
-        # 재시작 직후 자동 미입력 처리 — auto_schedule_seconds 대기 없이 즉시 실행
-        # (봇이 꺼져 있는 동안 지나간 보스들에 대해 바로 다음 예약 생성)
-        async with get_db() as db:
-            async with db.execute(
-                """SELECT s.guild_id, s.boss_name, s.scheduled_at, s.miss_count,
-                          b.respawn_seconds
-                   FROM schedules s
-                   JOIN bosses b ON s.guild_id=b.guild_id AND s.bot_number=b.bot_number AND s.boss_name=b.name
-                   WHERE s.bot_number=? AND s.notified=1 AND s.boss_name IS NOT NULL
-                     AND b.fixed=0
-                   ORDER BY s.scheduled_at DESC""",
-                (self.bn,),
-            ) as cur:
-                notified_rows = [dict(r) async for r in cur]
-
-        latest: dict[tuple, dict] = {}
-        for row in notified_rows:
-            key = (row["guild_id"], row["boss_name"])
-            if key not in latest:
-                latest[key] = row
-
-        for (guild_id, boss_name), row in latest.items():
-            if not row["respawn_seconds"]:
-                continue
-            async with get_db() as db:
-                async with db.execute(
-                    "SELECT 1 FROM schedules WHERE guild_id=? AND bot_number=? AND boss_name=? AND notified=0",
-                    (guild_id, self.bn, boss_name),
-                ) as cur:
-                    if await cur.fetchone():
-                        continue
-                at = datetime.fromisoformat(row["scheduled_at"])
-                new_at   = at + timedelta(seconds=row["respawn_seconds"])
-                new_miss = row["miss_count"] + 1
-                while new_at <= n:
-                    new_at   += timedelta(seconds=row["respawn_seconds"])
-                    new_miss += 1
-                await db.execute(
-                    """INSERT INTO schedules
-                       (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
-                       VALUES (?,?,?,?,?,?)""",
-                    (guild_id, self.bn, boss_name, boss_name,
-                     new_at.isoformat(), new_miss),
-                )
-                await db.commit()
-        print(f"[뚠뚠봇{self.bn:03d}] 재시작 복구 완료 — {len(latest)}개 보스 자동 미입력 처리 확인")
 
     @check_schedules.error
     async def on_check_schedules_error(self, error: Exception):
         """루프 예외로 중단됐을 때 알림 발송 + 자동 재시작"""
-        import traceback
-        msg = f"check_schedules 루프 중단! 재시작합니다.\n`{type(error).__name__}: {error}`"
-        print(f"[뚠뚠봇{self.bn:03d}] {msg}")
-        traceback.print_exc()
-        from src.utils.notify import alert
-        await alert(self.bot, self.bn, msg)
+        # before_check already records a more specific bootstrap failure. Do not
+        # overwrite it or send a second alert for the same failed startup.
+        if self._scheduler_health().get("status") != "failed":
+            await self._mark_scheduler_failed(
+                "SCHEDULER_LOOP_STOPPED",
+                error,
+                context="보스 알림 스케줄러 중단",
+            )
         await asyncio.sleep(1)
-        if not self.check_schedules.is_running():
-            self.check_schedules.restart()
+        # Loop.restart() must be invoked while the failed task still exists so
+        # discord.py can attach its restart callback. Waiting for is_running()
+        # to become false here leaves the loop permanently stopped.
+        self.check_schedules.restart()
 
 
 async def setup(bot: commands.Bot):

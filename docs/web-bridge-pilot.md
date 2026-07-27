@@ -61,6 +61,30 @@ deliveries share an event key. Retention is limited to 24 hours and the latest
 binds its query string into the signature, filters by the current configured
 channel, and returns at most 100 events in ascending cursor order.
 
+## Scheduler health and startup recovery
+
+`GET /internal/v1/targets` includes a strict, safe scheduler object:
+
+- `starting`: recovery or the first real tick is pending;
+- `ready`: bootstrap and latest successful tick timestamps are present;
+- `failed`: a bounded uppercase error code is present.
+
+The bridge normalizes impossible internal combinations to
+`SCHEDULER_STATUS_UNKNOWN` and never returns exception text or a traceback.
+Repeated scheduler incidents are rate limited, and a later successful tick
+closes the incident so a new outage can be reported once.
+
+The bot logs in before scheduler cogs are loaded. The optional bridge then
+starts before the Discord gateway connects so it can observe lifecycle
+messages. Bridge startup failure is fail-open for Discord core behavior; fatal
+Discord login or connection failure is not swallowed in single-bot mode.
+
+At scheduler bootstrap, overdue rows for the running bot number are marked
+complete without sending Discord or TTS output. Normal and fixed bosses receive
+one safe future pending row where their configuration permits it. Exact-now
+rows are preserved, arbitrary reservations are not regenerated, duplicate
+future rows are removed, and rerunning recovery is idempotent.
+
 ## Deployment boundary
 
 Building the shared image does not authorize recreating every service. After
@@ -87,6 +111,9 @@ the pilot deployment; they must remain unchanged.
 7. Verify human, other-bot, DM, and other-channel messages are not mirrored.
 8. Verify process commands are rejected.
 9. Stop only the 003 bridge/container and confirm the other bots continue.
+10. Confirm scheduler health reaches `ready`, the latest tick advances, overdue
+    bot-003 rows are zero, and each configured boss has at most one future
+    pending row.
 
 ## Recovery
 
