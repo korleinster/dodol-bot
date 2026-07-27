@@ -57,12 +57,33 @@ def make_bot(bot_number: int) -> commands.Bot:
     bot = commands.Bot(command_prefix="\x00", intents=intents)
     bot.bot_number = bot_number
     bot._ready_count = 0  # on_ready 호출 횟수 (네트워크 재연결 감지용)
+    bot._bridge_start_error_code = None
+    bot._bridge_start_error_reported = False
+    bot.scheduler_health = {
+        "status": "starting",
+        "bootstrapCompletedAt": None,
+        "lastTickAt": None,
+        "errorCode": None,
+    }
     return bot
 
 
 async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) -> None:
     if bot is None:
         bot = make_bot(bot_number)
+    if not hasattr(bot, "_ready_count"):
+        bot._ready_count = 0
+    if not hasattr(bot, "_bridge_start_error_code"):
+        bot._bridge_start_error_code = None
+    if not hasattr(bot, "_bridge_start_error_reported"):
+        bot._bridge_start_error_reported = False
+    if not hasattr(bot, "scheduler_health"):
+        bot.scheduler_health = {
+            "status": "starting",
+            "bootstrapCompletedAt": None,
+            "lastTickAt": None,
+            "errorCode": None,
+        }
 
     @bot.event
     async def on_ready():
@@ -72,25 +93,59 @@ async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) 
         emoji, label = _REASON_LABEL[reason]
         print(f"[뚠뚠봇{bot_number:03d}] {bot.user} 온라인 — {label} (commit: {commit})")
         await _notify_ready(bot, bot_number, commit, reason)
-
-    for cog in COGS:
-        await bot.load_extension(cog)
+        if bot._bridge_start_error_code and not bot._bridge_start_error_reported:
+            bot._bridge_start_error_reported = True
+            from src.utils.notify import alert
+            await alert(
+                bot,
+                bot_number,
+                "웹 연동 시작에 실패했습니다 "
+                f"({bot._bridge_start_error_code}). Discord 핵심 기능은 계속 동작합니다.",
+            )
 
     bridge = None
     try:
-        from src.web_bridge import start_web_bridge
-        bridge = await start_web_bridge(bot)
-        await bot.start(token)
+        # discord.py의 공개 생명주기를 명시적으로 나눈다. login()이 완료된 뒤
+        # Cog의 background loop를 만들면 wait_until_ready()가 초기화 전 예외를
+        # 내지 않고, bridge는 Discord 연결 전에 모든 생명주기 이벤트를 구독한다.
+        await bot.login(token)
+        for cog in COGS:
+            await bot.load_extension(cog)
+
+        try:
+            from src.web_bridge import start_web_bridge
+            bridge = await start_web_bridge(bot)
+        except Exception:
+            # 웹 bridge 장애가 Discord 보스 알림/TTS/게임까지 중단시키면 안 된다.
+            # 상세 예외는 노출하지 않고 고정된 운영 코드만 기록한다.
+            bot._bridge_start_error_code = "BRIDGE_START_FAILED"
+            print(
+                f"[뚠뚠봇{bot_number:03d}] 웹 연동 시작 실패 "
+                "(BRIDGE_START_FAILED) — Discord 기능은 계속 시작합니다."
+            )
+
+        await bot.connect(reconnect=True)
     finally:
-        if bridge is not None:
-            await bridge.close()
+        try:
+            if bridge is not None:
+                await bridge.close()
+        finally:
+            await bot.close()
 
 
-async def run_bot_safe(bot_number: int, token: str, bot: commands.Bot | None = None) -> None:
+async def run_bot_safe(
+    bot_number: int,
+    token: str,
+    bot: commands.Bot | None = None,
+    *,
+    propagate: bool = True,
+) -> None:
     try:
         await run_bot(bot_number, token, bot)
     except Exception as e:
         print(f"[뚠뚠봇{bot_number:03d}] 오류로 종료: {e}")
+        if propagate:
+            raise
 
 
 async def _notify_ready(
@@ -154,7 +209,10 @@ async def main() -> None:
                 bot = make_bot(n)
                 if first_bot is None:
                     first_bot = bot  # 첫 번째 봇에 텔레그램 리스너 연결
-                tasks.append(run_bot_safe(n, token, bot))
+                # Legacy multi-bot mode keeps healthy siblings alive. Production
+                # single-bot containers still propagate fatal startup failures
+                # so their supervisor can restart the failed bot.
+                tasks.append(run_bot_safe(n, token, bot, propagate=False))
                 print(f"뚠뚠봇{n:03d} 토큰 발견 — 인스턴스 준비")
 
         if not tasks:

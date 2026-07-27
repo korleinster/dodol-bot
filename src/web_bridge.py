@@ -32,10 +32,51 @@ NONCE_TTL_SECONDS = 60
 JOB_TTL_SECONDS = 15 * 60
 BLOCKED_COMMANDS = {"재시작", "정신차려"}
 BLOCKED_HEADS = {"소환", "설정"}
+SCHEDULER_STATUSES = {"starting", "ready", "failed"}
+SCHEDULER_ERROR_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _scheduler_health_payload(bot: Any) -> dict[str, Any]:
+    """Return the fail-closed, detail-free scheduler health contract."""
+    raw = getattr(bot, "scheduler_health", None)
+    if not isinstance(raw, dict):
+        raw = {}
+
+    status = raw.get("status")
+    if status not in SCHEDULER_STATUSES:
+        status = "starting"
+
+    def safe_timestamp(value: Any) -> int | None:
+        return value if type(value) is int and value >= 0 else None
+
+    bootstrap_completed_at = safe_timestamp(raw.get("bootstrapCompletedAt"))
+    last_tick_at = safe_timestamp(raw.get("lastTickAt"))
+    error_code = raw.get("errorCode")
+    if not isinstance(error_code, str) or not SCHEDULER_ERROR_CODE_RE.fullmatch(error_code):
+        error_code = None
+    if status == "ready" and (
+        bootstrap_completed_at is None or last_tick_at is None
+    ):
+        status = "failed"
+        error_code = "SCHEDULER_STATUS_UNKNOWN"
+    if status == "starting":
+        last_tick_at = None
+        error_code = None
+    if status == "failed" and error_code is None:
+        error_code = "SCHEDULER_STATUS_UNKNOWN"
+    if status != "failed":
+        error_code = None
+
+    return {
+        "status": status,
+        "bootstrapCompletedAt": bootstrap_completed_at,
+        "lastTickAt": last_tick_at,
+        "errorCode": error_code,
+    }
 
 
 def _actor_id(actor_ref: str) -> int:
@@ -300,7 +341,10 @@ class WebBridge:
     async def health(self, request: web.Request) -> web.Response:
         await self._authenticate(request)
         return web.json_response({
-            "ok": self.bot.is_ready(), "botNumber": self.bot.bot_number, "version": BRIDGE_VERSION,
+            "ok": self.bot.is_ready(),
+            "botNumber": self.bot.bot_number,
+            "version": BRIDGE_VERSION,
+            "scheduler": _scheduler_health_payload(self.bot),
         })
 
     async def targets(self, request: web.Request) -> web.Response:
@@ -320,6 +364,7 @@ class WebBridge:
                 "botNumber": self.bot.bot_number,
                 "textChannelId": str(text_id),
                 "voiceChannelId": str(voice_id) if voice_id else None,
+                "scheduler": _scheduler_health_payload(self.bot),
             })
         return web.json_response({"targets": targets})
 

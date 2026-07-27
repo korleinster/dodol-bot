@@ -155,6 +155,16 @@ and deletes. It excludes human messages, other bots, DMs, and non-configured
 channels. The additive event log keeps up to 24 hours and 500 events per guild;
 the authenticated cursor endpoint replays at most 100 events per request.
 
+Bridge target responses also expose a detail-free scheduler status with
+`starting`, `ready`, or `failed`, the bootstrap and latest successful tick
+timestamps, and a bounded error code. Exception text and tracebacks are never
+returned.
+
+Discord startup uses the explicit `login → load cogs → start bridge → connect`
+sequence. An optional bridge startup failure does not stop Discord commands or
+boss scheduling, while a fatal Discord startup error still exits the single-bot
+container for supervisor recovery.
+
 Builds may contain the shared bridge code, but the pilot deployment recreates
 only `dodol-bot-003`:
 
@@ -341,6 +351,11 @@ Bosses that automatically alert at a fixed day/time each week.
 - Automatically scheduled for the next appearance time on server startup.
 - Automatically re-scheduled for the next time after each alert.
 - **Excluded** from kill/miss processing and server-open scheduling.
+
+Startup reconciliation quietly acknowledges overdue rows without replaying
+missed Discord or TTS alerts. It preserves an exact-now row, creates one safe
+future row for configured normal and fixed bosses when possible, and never
+regenerates an arbitrary reservation.
 
 ---
 
