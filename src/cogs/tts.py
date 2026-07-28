@@ -1,9 +1,12 @@
 """TTS — gTTS (Google TTS), 음성채널 상시 연결"""
 import asyncio
+import importlib.metadata
+import importlib.util
 import os
+import shutil
 import sys
 import tempfile
-from functools import partial
+from functools import lru_cache, partial
 
 import discord
 from discord.ext import commands, tasks
@@ -11,6 +14,36 @@ from discord.ext import commands, tasks
 from gtts import gTTS
 
 RESTART_KW = {"정신차려", "재시작"}
+VOICE_RUNTIME_VERSIONS = {
+    "discord.py": "2.7.1",
+    "davey": "0.1.6",
+    "PyNaCl": "1.5.0",
+}
+
+
+@lru_cache(maxsize=1)
+def detect_voice_runtime_capability() -> tuple[bool, str]:
+    """Validate the pinned DAVE voice runtime without exposing host details."""
+    for distribution, expected in VOICE_RUNTIME_VERSIONS.items():
+        safe_name = distribution.upper().replace(".", "_")
+        try:
+            actual = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            return False, f"{safe_name}_MISSING"
+        if actual != expected:
+            return False, f"{safe_name}_VERSION_UNSUPPORTED"
+
+    for module, code in (("davey", "DAVEY_IMPORT_MISSING"), ("nacl", "PYNACL_IMPORT_MISSING")):
+        try:
+            available = importlib.util.find_spec(module) is not None
+        except (ImportError, ModuleNotFoundError, ValueError):
+            available = False
+        if not available:
+            return False, code
+
+    if shutil.which("ffmpeg") is None:
+        return False, "FFMPEG_MISSING"
+    return True, "VOICE_RUNTIME_READY"
 
 
 def _save_tts(text: str, path: str) -> None:
@@ -24,6 +57,17 @@ class TTS(commands.Cog):
         self.bot = bot
         self.bn  = bot.bot_number
         self._connecting: set[int] = set()  # 현재 연결 시도 중인 guild_id
+        self._voice_runtime_error_code: str | None = None
+
+    def _voice_runtime_ready(self) -> bool:
+        ready, code = detect_voice_runtime_capability()
+        if ready:
+            self._voice_runtime_error_code = None
+            return True
+        if self._voice_runtime_error_code != code:
+            print(f"[TTS] 음성 런타임 사용 불가: {code}")
+            self._voice_runtime_error_code = code
+        return False
 
     # ── DB 헬퍼 ───────────────────────────────────────────
 
@@ -51,6 +95,9 @@ class TTS(commands.Cog):
 
     async def ensure_connected(self, guild: discord.Guild) -> discord.VoiceClient | None:
         """음성채널에 연결되어 있지 않으면 연결. 이미 연결 중이면 그대로 반환."""
+        if not self._voice_runtime_ready():
+            return None
+
         vc_id = await self.get_voice_channel(guild.id)
         if not vc_id:
             return None
@@ -147,6 +194,9 @@ class TTS(commands.Cog):
     # ── speak (외부에서 호출 가능) ────────────────────────
 
     async def speak(self, guild: discord.Guild, text: str, *, wait_until_complete: bool = False) -> bool:
+        if not self._voice_runtime_ready():
+            return False
+
         # 1. TTS 파일 먼저 생성
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp_path = f.name

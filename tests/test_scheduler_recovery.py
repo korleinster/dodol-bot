@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from src import db as db_module
 from src.cogs import boss as boss_module
@@ -29,6 +29,29 @@ def _bare_boss(bot_number=3):
     cog._scheduler_error_reported_at = 0.0
     cog._scheduler_bootstrapped = False
     return cog
+
+
+class ManualBossTtsPolicyTest(unittest.IsolatedAsyncioTestCase):
+    async def test_z_variants_are_text_only_and_never_resolve_tts_cog(self):
+        for command, include_fixed in (
+            ("z", False),
+            ("Z", False),
+            ("z+", True),
+            ("Z+", True),
+        ):
+            with self.subTest(command=command):
+                cog = _bare_boss()
+                cog._cmd_botam = AsyncMock()
+                cog.bot.get_cog = Mock(side_effect=AssertionError("manual Z must not resolve TTS"))
+                message = SimpleNamespace(guild=SimpleNamespace(id=100))
+
+                await cog._dispatch(message, command)
+
+                cog._cmd_botam.assert_awaited_once_with(
+                    message,
+                    include_fixed=include_fixed,
+                )
+                cog.bot.get_cog.assert_not_called()
 
 
 class SchedulerRecoveryTest(unittest.IsolatedAsyncioTestCase):

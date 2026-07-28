@@ -41,6 +41,12 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _is_tts_command(command: str) -> bool:
+    """Only explicit v/ㅍ commands enter the manual TTS queue."""
+    parts = command.strip().split(maxsplit=1)
+    return len(parts) == 2 and parts[0].lower() in {"v", "ㅍ"} and bool(parts[1].strip())
+
+
 def _scheduler_health_payload(bot: Any) -> dict[str, Any]:
     """Return the fail-closed, detail-free scheduler health contract."""
     raw = getattr(bot, "scheduler_health", None)
@@ -586,7 +592,7 @@ class WebBridge:
                 raise web.HTTPConflict(text="idempotency key conflict")
             return web.json_response(existing.payload())
 
-        is_tts = command == "Z" or command.split(maxsplit=1)[0].lower() in {"v", "ㅍ"}
+        is_tts = _is_tts_command(command)
         if is_tts and self.tts_pending >= MAX_TTS_QUEUE:
             raise web.HTTPTooManyRequests(text="TTS queue is full")
         job = BridgeJob(id=request_id, actor_ref=actor_ref, command=command)

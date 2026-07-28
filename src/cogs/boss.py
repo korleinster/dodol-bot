@@ -449,28 +449,6 @@ class Boss(commands.Cog):
                 await self._cmd_botam(message, include_fixed=True)
             else:
                 await self._cmd_botam(message, include_fixed=False)
-                if head == "Z":
-                    async with get_db() as db:
-                        async with db.execute(
-                            "SELECT * FROM schedules WHERE guild_id=? AND bot_number=? "
-                            "AND notified=0 AND is_fixed=0 ORDER BY scheduled_at LIMIT 1",
-                            (message.guild.id, self.bn),
-                        ) as cur:
-                            nxt = await cur.fetchone()
-                    if nxt:
-                        nxt = dict(nxt)
-                        at = datetime.fromisoformat(nxt["scheduled_at"])
-                        remain = fmt_remain(at - now())
-                        tts_cog = self.bot.get_cog("TTS")
-                        if tts_cog:
-                            is_web = getattr(message.author, "actor_type", "discord") == "web_guest"
-                            played = await tts_cog.speak(
-                                message.guild,
-                                f"{nxt['content']} {remain}",
-                                wait_until_complete=is_web,
-                            )
-                            if is_web and not played:
-                                raise RuntimeError("TTS playback failed")
             return
 
         # 서버오픈: "05:00 서버오픈" / "서버오픈 05:00" / "오픈 05:00"

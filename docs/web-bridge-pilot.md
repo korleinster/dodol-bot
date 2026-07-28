@@ -29,6 +29,22 @@ Web users receive stable negative actor IDs and display as `웹 · nickname`.
 Contributions retain the legacy `user_id` field while recording additive
 `actor_type` and `actor_ref` values.
 
+## W6 TTS routing
+
+The Revision 2 pilot keeps manual voice output narrowly scoped. Only a command
+whose leading token is `v` or `ㅍ` (followed by text) enters the TTS queue. `Z`
+and `Z+` are text/list-only reservation commands; they do not call the TTS cog,
+increment queue state, or consume a pending-job slot. Lowercase reservation
+aliases follow the same text-only rule. Scheduled exact-time boss alerts still
+perform their existing automatic Discord notification and TTS in the scheduler
+path.
+
+The voice-enabled runtime is pinned to `discord.py[voice]==2.7.1`. The image
+must also contain the `davey` DAVE dependency, PyNaCl, and FFmpeg. Verify these
+inside the actual image with `python -m discord --version` and imports of
+`discord`, `davey`, and `nacl`; see [`tts-dave-pilot.md`](tts-dave-pilot.md) for
+the complete local/container checks.
+
 ## Shared component-action contract (M42)
 
 The bridge exposes the bot-003-only `POST /internal/v1/component-actions`
@@ -139,8 +155,10 @@ the pilot deployment; they must remain unchanged.
 3. Confirm the socket owner group and `0660` mode.
 4. Submit identical reset requests with the same idempotency key and verify one
    execution.
-5. Run TTS, dice, number game, race, and lottery from web and confirm Discord
-   output and web events agree.
+5. Run `v <text>` and `ㅍ <text>` from web and confirm one TTS job per command;
+   run `Z` and `Z+` and confirm the text/list response leaves the TTS queue
+   unchanged. Then run dice, number game, race, and lottery and confirm
+   Discord output and web events agree.
 6. Trigger bot speech from Discord, a scheduler, and a web command; confirm one
    web card per Discord message and confirm edits/deletes converge.
 7. Verify human, other-bot, DM, and other-channel messages are not mirrored.
@@ -167,5 +185,7 @@ the pilot deployment; they must remain unchanged.
 Bridge and command failures are explicit; clients must not assume success. For
 capacity, authentication, or timeout failures, inspect bot-003 health and retry
 only through a new owner-approved operational action. Preserve the shared DB and
-socket directory. Never delete the database or restart the other bot instances
-as an automatic recovery step.
+socket directory. The W6 rollback may recreate only `dodol-bot-003` from the
+known-good image tag; never delete the database or restart/recreate 001, 002, or
+004 as an automatic recovery step. See [`tts-dave-pilot.md`](tts-dave-pilot.md)
+for the exact rollback commands.

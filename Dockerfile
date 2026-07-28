@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -r
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -c "import davey, discord, nacl; assert discord.__version__ == '2.7.1'"
 
 COPY . .
 

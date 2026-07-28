@@ -31,6 +31,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 8. [Ubuntu + Docker Deployment](#ubuntu--docker-deployment)
 9. [Project Structure](#project-structure)
 10. [Bot 003 Web Bridge Pilot](#bot-003-web-bridge-pilot)
+11. [W6 TTS/DAVE Pilot (Bot 003 Only)](#w6-ttsdave-pilot-bot-003-only)
 
 ---
 
@@ -39,7 +40,8 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 | Item | Details |
 |---|---|
 | Language | Python 3.11 |
-| Bot framework | discord.py 2.6.4 |
+| Bot framework | discord.py[voice] 2.7.1 |
+| Voice encryption | DAVE via the required `davey` runtime dependency |
 | TTS | gTTS (Google TTS, `ko`) |
 | Database | SQLite + aiosqlite |
 | Price API | PLAYNC Developer Center (`dev-api.plaync.com/l2m/v1.0`) |
@@ -78,8 +80,18 @@ cp .env.example .env
 python main.py
 ```
 
-> **FFmpeg required** — used for TTS audio playback.  
+> **FFmpeg required** — used for TTS audio playback. `discord.py[voice]==2.7.1`
+> also requires the voice extras (including PyNaCl) and the `davey` package for
+> Discord's DAVE voice encryption. Verify both before testing voice.
 > macOS: `brew install ffmpeg` / Ubuntu: `apt install ffmpeg`
+
+The dependency check is intentionally explicit because `discord.py` 2.7.1
+raises when `davey` is missing from a voice-enabled process:
+
+```bash
+python -m discord --version       # must report discord.py 2.7.1 and davey
+python -c 'import discord, davey, nacl; print(discord.__version__)'
+```
 
 ---
 
@@ -209,6 +221,27 @@ Do not recreate, restart, or reconfigure 001, 002, or 004 as part of the pilot.
 See [`docs/web-bridge-pilot.md`](docs/web-bridge-pilot.md) for verification and
 recovery details.
 
+## W6 TTS/DAVE Pilot (Bot 003 Only)
+
+Revision 2 keeps the voice change narrowly scoped to the manual commands that
+are intended to speak:
+
+- `v <text>` and `ㅍ <text>` are the only manual TTS entrypoints. They enqueue
+  voice playback (subject to the existing web queue limit).
+- `Z` and `Z+` are text/list-only reservation commands. They must not enqueue,
+  claim, or otherwise invoke TTS. Lowercase reservation-list aliases follow the
+  same rule.
+- Scheduled exact-time boss alerts retain their existing automatic TTS; this
+  background behavior is independent of manual command routing.
+
+The DAVE/voice dependency and the exact local and container checks are defined
+in [`docs/tts-dave-pilot.md`](docs/tts-dave-pilot.md). The rollout is a
+bot-003-only pilot: build the shared image if needed, then recreate only
+`dodol-bot-003`. Do not recreate, restart, or reconfigure `dodol-bot-001`,
+`dodol-bot-002`, or `dodol-bot-004`; capture their container IDs and start times
+before and after the change. Rollback also recreates only bot 003 from the
+previous image tag.
+
 ---
 
 ## Command Reference
@@ -329,7 +362,8 @@ The exact-time alert shows **✅ Kill / 😶 Miss** buttons. Pressing them immed
 보탐 / ㅂㅌ / ㅋ / z  ← next 5 upcoming reservations (total count shown)
 보탐+ / ㅂㅌ+ / ㅋ+ / z+  ← full reservation list
 
-Z                    ← next 5 + TTS voice alert
+Z                    ← text-only next-5 reservation list (never queues TTS)
+Z+                   ← text-only full reservation list (never queues TTS)
 
 전체삭제              ← show contributor ranking, then reset non-fixed reservations/history + contribution records
 초기화                ← same as above (fixed-schedule bosses remain)
@@ -406,13 +440,20 @@ Configure the grace period before a boss is auto-scheduled when no kill/miss is 
 ### TTS
 
 Reads text aloud in the assigned voice channel (gTTS, Korean). Maintains a permanent voice channel connection.
+Manual TTS is deliberately limited to the two commands below:
 
 ```
-ㅍ 좋은 아침입니다         ← reads the text in the voice channel
+ㅍ 좋은 아침입니다         ← queues the text for voice playback
 v 좋은 아침입니다          ← same
 정신차려                   ← full bot restart
 재시작                     ← same
 ```
+
+`Z` and `Z+` only render reservation lists. They are text/list commands and
+must never create a TTS job. The same rule applies to `z`, `z+`, `보탐`, and
+`보탐+`. Scheduled exact-time boss alerts continue to send their existing
+automatic Discord notification and automatic TTS independently of these
+manual commands.
 
 ---
 
