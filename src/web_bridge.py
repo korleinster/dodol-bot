@@ -16,6 +16,7 @@ from typing import Any
 import discord
 from aiohttp import web
 
+from src.component_actions import COMPONENT_ACTIONS, ComponentActionDispatcher
 from src.db import (
     append_web_broadcast_event,
     get_db,
@@ -127,16 +128,27 @@ def _component_type(component: Any) -> int:
 
 
 def _message_components(message: discord.Message) -> list[dict[str, Any]]:
-    """Flatten Discord action rows into the guest feed's safe, read-only shape."""
+    """Flatten components with explicit policy metadata for new broadcasts."""
     result: list[dict[str, Any]] = []
+    guild_id = int(getattr(getattr(message, "guild", None), "id", 0) or 0)
+    message_id = int(getattr(message, "id", 0) or 0)
     for row in getattr(message, "components", ()) or ():
         children = getattr(row, "children", None)
         for component in children if children is not None else (row,):
-            result.append({
-                "label": getattr(component, "label", None),
-                "customId": getattr(component, "custom_id", None),
-                "type": _component_type(component),
-            })
+            style_value = getattr(component, "style", None)
+            try:
+                style = int(getattr(style_value, "value", style_value)) if style_value is not None else None
+            except (TypeError, ValueError):
+                style = None
+            result.append(COMPONENT_ACTIONS.metadata(
+                label=getattr(component, "label", None),
+                custom_id=getattr(component, "custom_id", None),
+                component_type=_component_type(component),
+                style=style,
+                disabled=bool(getattr(component, "disabled", False)),
+                guild_id=guild_id,
+                message_id=message_id,
+            ))
     return result
 
 
@@ -286,6 +298,7 @@ class WebBridge:
         self.runner: web.AppRunner | None = None
         self.tts_lock = asyncio.Lock()
         self.tts_pending = 0
+        self.component_dispatcher = ComponentActionDispatcher(bot)
         self._broadcast_listeners_registered = False
         # Keep the exact bound-method instances so discord.py can reliably
         # unregister them when 003 shuts down or reconnects during a deploy.
@@ -590,6 +603,54 @@ class WebBridge:
             raise web.HTTPNotFound(text="command not found")
         return web.json_response(job.payload())
 
+    async def component_actions(self, request: web.Request) -> web.Response:
+        """Run one registered Discord component through the shared dispatcher.
+
+        Action-level denials deliberately use a 200 response with ``status``
+        ``failed``. The leinsterCenter bridge client otherwise turns a useful
+        policy code into a generic bridge-unavailable failure before its route
+        can map the denial to the appropriate public HTTP status.
+        """
+        data = await self._json(request)
+        request_id = str(data.get("requestId", ""))
+        actor_ref = str(data.get("actorRef", ""))
+        nickname = str(data.get("nickname", "")).strip()
+        actor_type = str(data.get("actorType", ""))
+        custom_id = str(data.get("customId", ""))
+        try:
+            guild_id = int(str(data.get("guildId", "")))
+            message_id = int(str(data.get("messageId", "")))
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text="invalid component target") from exc
+        if not re.fullmatch(r"[A-Za-z0-9_-]{8,100}", request_id):
+            raise web.HTTPBadRequest(text="invalid requestId")
+        if not actor_ref or len(actor_ref) > 200:
+            raise web.HTTPBadRequest(text="invalid component actor")
+        if actor_type not in {"web_guest", "owner"}:
+            raise web.HTTPBadRequest(text="invalid component actor type")
+        if actor_type == "web_guest" and (
+            not (2 <= len(nickname) <= 20) or re.search(r"[@\x00-\x1f\x7f]", nickname)
+        ):
+            raise web.HTTPBadRequest(text="invalid web actor")
+        if actor_type == "owner" and not nickname:
+            nickname = "사장"
+        if guild_id <= 0 or message_id <= 0 or not custom_id or len(custom_id) > 100:
+            raise web.HTTPBadRequest(text="invalid component target")
+
+        actor = WebActor(actor_ref, nickname)
+        actor.actor_type = actor_type
+        result = await self.component_dispatcher.dispatch(
+            request_id=request_id,
+            guild_id=guild_id,
+            message_id=message_id,
+            custom_id=custom_id,
+            actor=actor,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            is_owner=actor_type == "owner",
+        )
+        return web.json_response(result.payload())
+
     async def _run_command(self, job: BridgeJob, guild_id: int, nickname: str, is_tts: bool) -> None:
         job.status = "running"
         job.updated_at = _now_ms()
@@ -715,6 +776,7 @@ class WebBridge:
         app.router.add_get("/internal/v1/health", self.health)
         app.router.add_get("/internal/v1/targets", self.targets)
         app.router.add_get("/internal/v1/broadcast-events", self.broadcast_events)
+        app.router.add_post("/internal/v1/component-actions", self.component_actions)
         app.router.add_post("/internal/v1/commands", self.create_command)
         app.router.add_get("/internal/v1/commands/{job_id}", self.get_command)
         app.router.add_post("/internal/v1/lottery/{message_id}/draw", self.draw_lottery)

@@ -1,6 +1,7 @@
 # DB 스키마 명세
 
-SQLite 단일 파일 (`bot.db`). 테이블 3개.
+SQLite 단일 파일 (`bot.db`). 기존 스케줄/보스/기여 테이블은 유지하며,
+M42는 버튼 실행 claim/audit를 additive 방식으로 확장한다.
 
 ---
 
@@ -104,6 +105,33 @@ INSERT (notified=0, warned_5min=0, warned_1min=0)
 
 - 텍스트 명령(`체르 컷`) 및 버튼(`✅ 컷`) 모두 기록됨
 - 시즌/기간 구분 없음 — 초기화 전까지 누적
+
+---
+
+## M42 component action claims (additive)
+
+The component-action dispatcher uses a separate idempotency record so a web
+retry or a Discord double-click cannot repeat a state change. Exact column names
+are implementation-owned, but each row must retain the following bounded
+fields:
+
+| Field | Purpose |
+|---|---|
+| request/action ID | Client retry identity and Discord interaction correlation |
+| guild/message/custom-ID claim key | Message-level cut/miss claim or default `message_id + custom_id` claim |
+| actor type/reference | `web_guest`, `owner`, or Discord actor reference; never raw credentials |
+| status | queued, succeeded, failed, or already processed |
+| safe result/error fields | Bounded user-facing outcome and retry guidance |
+| created/updated timestamps | Retention and audit ordering |
+
+The claim key is unique. A duplicate request with the same payload returns the
+recorded outcome; a conflicting payload is rejected. The table must never store
+passwords, cookies, bridge signatures, HMAC secrets, or traceback text.
+
+Button registration metadata is not inferred from this SQLite history. The
+running dispatcher remains the source of truth for `custom_id`, handler,
+`style`, `disabled`, `actionable`, and mandatory `allowNonAdmin`; an unknown or
+policy-less component is inert.
 
 ---
 

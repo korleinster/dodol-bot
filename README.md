@@ -155,6 +155,39 @@ and deletes. It excludes human messages, other bots, DMs, and non-configured
 channels. The additive event log keeps up to 24 hours and 500 events per guild;
 the authenticated cursor endpoint replays at most 100 events per request.
 
+### Shared Discord component actions (M42)
+
+Newly registered buttons are handled by one dispatcher shared by Discord and
+the leinsterCenter web portal. Every registered button must include:
+
+- `custom_id` and its handler/claim rule;
+- the current `style` and `disabled` state;
+- `actionable=true`; and
+- the required boolean `allowNonAdmin` policy.
+
+`allowNonAdmin=true` permits authenticated web guests and ordinary Discord
+members. `allowNonAdmin=false` requires the owner web surface or a Discord
+guild administrator. The bridge rechecks this policy from the authenticated
+actor and the configured guild; browser requests cannot supply a role, actor,
+guild, channel, or permission override.
+
+Components without a registry entry or without the M42 policy metadata remain
+read-only, and disabled components are never dispatched. Explicitly restricted
+controls are omitted from guest feeds while remaining visible in the owner
+audit feed. Messages created before M42 are therefore safe to display but are
+not silently upgraded into executable controls.
+
+The signed bot-003 bridge action endpoint is
+`POST /internal/v1/component-actions`. It validates the original bot-authored
+message, configured text channel, custom ID, and current component state before
+calling the shared handler. Cut and miss buttons on one boss message share a
+single message-level claim; other buttons default to `message_id + custom_id`.
+Repeated requests return the recorded outcome without repeating the change.
+Successful actions edit the Discord message and feed state together. A failed
+or timed-out action keeps a safe retry path and never reports success by
+assumption. Claim/audit data excludes passwords, cookies, bridge signatures,
+HMAC secrets, and stack traces.
+
 Bridge target responses also expose a detail-free scheduler status with
 `starting`, `ready`, or `failed`, the bootstrap and latest successful tick
 timestamps, and a bounded error code. Exception text and tracebacks are never
@@ -165,8 +198,8 @@ sequence. An optional bridge startup failure does not stop Discord commands or
 boss scheduling, while a fatal Discord startup error still exits the single-bot
 container for supervisor recovery.
 
-Builds may contain the shared bridge code, but the pilot deployment recreates
-only `dodol-bot-003`:
+Builds may contain the shared bridge code, but the M42 pilot implementation and
+deployment target only `dodol-bot-003`:
 
 ```bash
 docker compose up -d --no-deps dodol-bot-003
@@ -290,7 +323,7 @@ When a boss's appearance time arrives, **3-stage alerts** are sent automatically
 | 1 min before | 🟠 Orange | ⚠️ Appears in 1 minute |
 | Exact time | 🔴 Red | ⚔️ Boss appeared! + TTS + **Kill/Miss buttons** |
 
-The exact-time alert shows **✅ Kill / 😶 Miss** buttons. Pressing them immediately processes the kill or miss (buttons not shown for fixed-schedule bosses).
+The exact-time alert shows **✅ Kill / 😶 Miss** buttons. Pressing them immediately processes the kill or miss (buttons not shown for fixed-schedule bosses). The same registered buttons are available in the bot-003 web feed when their `allowNonAdmin` policy permits the current actor; cut and miss remain one idempotent message-level action.
 
 ```
 보탐 / ㅂㅌ / ㅋ / z  ← next 5 upcoming reservations (total count shown)

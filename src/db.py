@@ -84,6 +84,30 @@ CREATE INDEX IF NOT EXISTS idx_web_broadcast_event_guild_cursor
     ON web_broadcast_event (guild_id, cursor);
 CREATE INDEX IF NOT EXISTS idx_web_broadcast_event_created_at
     ON web_broadcast_event (created_at);
+
+-- A durable, per-component execution ledger. The idempotency key is chosen
+-- by the component registry (for example both cut/miss buttons of one boss
+-- alert intentionally share one key).
+CREATE TABLE IF NOT EXISTS component_action_claim (
+    idempotency_key TEXT PRIMARY KEY,
+    request_id      TEXT    NOT NULL,
+    guild_id        INTEGER NOT NULL,
+    channel_id      INTEGER NOT NULL,
+    message_id      INTEGER NOT NULL,
+    custom_id       TEXT    NOT NULL,
+    action_key      TEXT    NOT NULL,
+    actor_type      TEXT    NOT NULL,
+    actor_ref       TEXT,
+    status          TEXT    NOT NULL CHECK (status IN ('processing', 'succeeded', 'failed')),
+    error_code      TEXT,
+    attempt_count   INTEGER NOT NULL DEFAULT 1,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    completed_at    INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_component_action_claim_message
+    ON component_action_claim (guild_id, message_id, updated_at);
 """
 
 WEB_BROADCAST_RETENTION_MS = 24 * 60 * 60 * 1000
@@ -400,3 +424,99 @@ async def has_web_broadcast_message(
             (guild_id, channel_id, message_id),
         ) as cur:
             return await cur.fetchone() is not None
+
+
+async def claim_component_action(
+    *,
+    idempotency_key: str,
+    request_id: str,
+    guild_id: int,
+    channel_id: int,
+    message_id: int,
+    custom_id: str,
+    action_key: str,
+    actor_type: str,
+    actor_ref: str | None,
+) -> str:
+    """Claim an action exactly once until its handler reports a retryable failure.
+
+    The insert/update happens under ``BEGIN IMMEDIATE`` so separate bot
+    processes cannot both begin a mutually-exclusive cut/miss operation. A
+    succeeded claim remains terminal; a failed claim is auditable and may be
+    retried with a new request ID.
+    """
+    now_ms = int(time.time() * 1000)
+    async with get_db() as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            async with db.execute(
+                "SELECT status FROM component_action_claim WHERE idempotency_key=?",
+                (idempotency_key,),
+            ) as cur:
+                row = await cur.fetchone()
+            if row is None:
+                await db.execute(
+                    """INSERT INTO component_action_claim
+                       (idempotency_key, request_id, guild_id, channel_id, message_id,
+                        custom_id, action_key, actor_type, actor_ref, status,
+                        attempt_count, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', 1, ?, ?)""",
+                    (
+                        idempotency_key, request_id, guild_id, channel_id, message_id,
+                        custom_id, action_key, actor_type, actor_ref, now_ms, now_ms,
+                    ),
+                )
+                state = "claimed"
+            elif row["status"] == "succeeded":
+                state = "succeeded"
+            elif row["status"] == "processing":
+                state = "in_progress"
+            else:
+                await db.execute(
+                    """UPDATE component_action_claim
+                       SET request_id=?, custom_id=?, action_key=?, actor_type=?, actor_ref=?,
+                           status='processing', error_code=NULL, updated_at=?, completed_at=NULL,
+                           attempt_count=attempt_count+1
+                       WHERE idempotency_key=?""",
+                    (
+                        request_id, custom_id, action_key, actor_type, actor_ref,
+                        now_ms, idempotency_key,
+                    ),
+                )
+                state = "claimed"
+            await db.commit()
+            return state
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def complete_component_action_claim(
+    idempotency_key: str,
+    *,
+    status: str,
+    error_code: str | None = None,
+) -> None:
+    """Finalize a claim without storing exception text or sensitive input."""
+    if status not in {"succeeded", "failed"}:
+        raise ValueError("component action claim must finish succeeded or failed")
+    now_ms = int(time.time() * 1000)
+    async with get_db() as db:
+        await db.execute(
+            """UPDATE component_action_claim
+               SET status=?, error_code=?, updated_at=?, completed_at=?
+               WHERE idempotency_key=? AND status='processing'""",
+            (status, error_code, now_ms, now_ms, idempotency_key),
+        )
+        await db.commit()
+
+
+async def get_component_action_claim_status(idempotency_key: str) -> str | None:
+    """Read a terminal claim for disabled-button reconciliation."""
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT status FROM component_action_claim WHERE idempotency_key=?",
+            (idempotency_key,),
+        ) as cur:
+            row = await cur.fetchone()
+    return str(row["status"]) if row is not None else None
