@@ -163,4 +163,3 @@ Re-run the container verification and compare the recorded IDs/start times for
 owner-approved recovery plan; do not rebuild from an unknown checkout and do
 not restart the other bot instances. Never delete the SQLite database as part
 of this rollback.
-

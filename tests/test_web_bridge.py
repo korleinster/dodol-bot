@@ -24,7 +24,7 @@ if "gtts" not in sys.modules:
 
 from src import db as db_module
 from src.cogs import tts as tts_module
-from src.cogs.tts import TTS
+from src.cogs.tts import TTS, parse_tts_command
 from src.web_bridge import WebBridge, _actor_id, _is_tts_command
 
 
@@ -45,6 +45,14 @@ class WebBridgePolicyTest(unittest.TestCase):
     def test_tts_length_is_bounded(self):
         with self.assertRaises(web.HTTPBadRequest):
             WebBridge._validate_command("v " + "가" * 201)
+
+    def test_manual_tts_parser_and_bridge_reject_non_space_delimiters(self):
+        for command in ("v\t테스트", "ㅍ\t테스트", "v\n테스트", "ㅍ\n테스트"):
+            with self.subTest(command=command):
+                self.assertIsNone(parse_tts_command(command))
+                self.assertFalse(_is_tts_command(command))
+                with self.assertRaises(web.HTTPBadRequest):
+                    WebBridge._validate_command(command)
 
     def test_only_v_and_korean_keyboard_alias_enter_manual_tts_queue(self):
         for command in ("v 안녕하세요", "V 안녕하세요", "ㅍ 보스 출현"):

@@ -52,6 +52,15 @@ def _save_tts(text: str, path: str) -> None:
     tts.save(path)
 
 
+def parse_tts_command(content: str) -> str | None:
+    """Parse the two explicit manual TTS forms using a literal space."""
+    command = content.strip()
+    if command.lower().startswith("v ") or command.startswith("ㅍ "):
+        text = command[2:].strip()
+        return text or None
+    return None
+
+
 class TTS(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -179,16 +188,13 @@ class TTS(commands.Cog):
         if not assigned or message.channel.id != assigned:
             return
 
-        cmd = content
-
-        if cmd.lower().startswith("v ") or cmd.startswith("ㅍ "):
-            text = cmd[2:].strip()
-            if text:
-                is_web = getattr(message.author, "actor_type", "discord") == "web_guest"
-                played = await self.speak(message.guild, text, wait_until_complete=is_web)
-                if is_web and not played:
-                    raise RuntimeError("TTS playback failed")
-        elif cmd.lower() in RESTART_KW:
+        text = parse_tts_command(content)
+        if text is not None:
+            is_web = getattr(message.author, "actor_type", "discord") == "web_guest"
+            played = await self.speak(message.guild, text, wait_until_complete=is_web)
+            if is_web and not played:
+                raise RuntimeError("TTS playback failed")
+        elif content.lower() in RESTART_KW:
             await self._restart(message)
 
     # ── speak (외부에서 호출 가능) ────────────────────────

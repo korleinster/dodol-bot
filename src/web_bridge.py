@@ -17,6 +17,7 @@ import discord
 from aiohttp import web
 
 from src.component_actions import COMPONENT_ACTIONS, ComponentActionDispatcher
+from src.cogs.tts import parse_tts_command
 from src.db import (
     append_web_broadcast_event,
     get_db,
@@ -43,8 +44,7 @@ def _now_ms() -> int:
 
 def _is_tts_command(command: str) -> bool:
     """Only explicit v/ㅍ commands enter the manual TTS queue."""
-    parts = command.strip().split(maxsplit=1)
-    return len(parts) == 2 and parts[0].lower() in {"v", "ㅍ"} and bool(parts[1].strip())
+    return parse_tts_command(command) is not None
 
 
 def _scheduler_health_payload(bot: Any) -> dict[str, Any]:
@@ -566,8 +566,8 @@ class WebBridge:
         if normalized.lower() in BLOCKED_COMMANDS or head.lower() in BLOCKED_HEADS:
             raise web.HTTPForbidden(text="system-impacting command is owner-only")
         if head.lower() in {"v", "ㅍ"}:
-            text = normalized[len(head):].strip()
-            if not text or len(text) > MAX_TTS_CHARS:
+            text = parse_tts_command(normalized)
+            if text is None or len(text) > MAX_TTS_CHARS:
                 raise web.HTTPBadRequest(text=f"TTS text must be 1-{MAX_TTS_CHARS} characters")
 
     async def create_command(self, request: web.Request) -> web.Response:
@@ -695,9 +695,8 @@ class WebBridge:
                     if listener:
                         await listener(message)
 
-                head = job.command.split(maxsplit=1)[0].lower()
-                if head in {"v", "ㅍ"}:
-                    spoken = job.command[len(head):].strip()
+                spoken = parse_tts_command(job.command)
+                if spoken is not None:
                     await capture.send(f"🔊 {message.author.display_name} TTS · {spoken}")
 
             if is_tts:
