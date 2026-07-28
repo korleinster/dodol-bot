@@ -29,6 +29,41 @@ Web users receive stable negative actor IDs and display as `웹 · nickname`.
 Contributions retain the legacy `user_id` field while recording additive
 `actor_type` and `actor_ref` values.
 
+## Shared component-action contract (M42)
+
+The bridge exposes the bot-003-only `POST /internal/v1/component-actions`
+endpoint for buttons mirrored in the web feed. Discord interactions and signed
+web requests enter the same dispatcher. A registry entry is required for every
+executable button and must declare:
+
+- the `custom_id` matcher and handler;
+- `style`, `disabled`, and `actionable=true`; and
+- the mandatory boolean `allowNonAdmin`.
+
+`allowNonAdmin=true` allows an authenticated web guest or an ordinary Discord
+member. `allowNonAdmin=false` allows only the owner web surface or a Discord
+guild administrator. The bridge derives the actor and configured guild/channel
+from trusted context and ignores browser-supplied permission fields.
+
+An unknown button, a missing policy boolean, a disabled component, a message
+outside the configured bot-authored channel, or a stale component fails closed.
+Pre-M42 messages remain read-only history; they are not retrofitted with an
+action policy. Guest broadcast payloads omit explicitly restricted controls,
+while owner payloads retain registered controls for audit.
+
+Before invoking a handler, the bridge verifies the original Discord message,
+bot identity, configured guild and text channel, exact custom ID, and current
+component state. Cut and miss on the same boss alert use one message-level
+claim so a race cannot settle twice. Other buttons default to a
+`message_id + custom_id` claim. Duplicate requests return the stored outcome.
+The action record contains bounded status/reason data only; it never contains
+passwords, cookies, HMAC material, signatures, or tracebacks.
+
+On success, the original Discord components and the web event converge to the
+disabled result. On handler failure, bridge timeout, or Discord edit failure,
+the result is explicit and includes safe retry guidance; the client must not
+infer success from a timeout.
+
 ## Shared game behavior
 
 - Dice, coin, and number games use the same in-process handlers as Discord.
@@ -114,6 +149,18 @@ the pilot deployment; they must remain unchanged.
 10. Confirm scheduler health reaches `ready`, the latest tick advances, overdue
     bot-003 rows are zero, and each configured boss has at most one future
     pending row.
+11. Register a button with `allowNonAdmin=true` and verify Discord member,
+    guest-web, and owner-web calls share one handler and one claim.
+12. Register a button with `allowNonAdmin=false` and verify the guest feed omits
+    it, a forged guest request is rejected, a guild administrator is accepted,
+    and an owner request is accepted.
+13. Verify missing-policy, unknown-custom-ID, disabled, stale-message, and
+    wrong-channel requests fail closed; verify pre-M42 messages remain inert.
+14. Race Discord and web cut/miss requests and resend the same request ID;
+    verify one underlying state change, converged disabled components, and a
+    bounded duplicate result.
+15. Force a bridge timeout and a Discord edit failure; verify no success is
+    inferred and the response includes a safe retry path.
 
 ## Recovery
 

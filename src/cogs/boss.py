@@ -12,6 +12,13 @@ KST = timezone(timedelta(hours=9))
 import discord
 from discord.ext import commands, tasks
 
+from src.component_actions import (
+    COMPONENT_ACTIONS,
+    LEGACY_COMPONENT_PREFIXES,
+    ComponentActionDispatcher,
+    RegisteredComponentAction,
+    boss_component_custom_id,
+)
 from src.db import get_db
 from src.korean import boss_matches, normalize_time
 
@@ -168,19 +175,19 @@ def parse_cut_command(text: str) -> dict | None:
 # ── 컷/멍 인라인 버튼 ─────────────────────────────────────────────────────────
 
 class BossActionView(discord.ui.View):
-    """custom_id에 guild_id:boss_name 인코딩 → 봇 재시작 후에도 on_interaction으로 처리 가능"""
+    """Versioned, centrally registered actions for one boss alert."""
     def __init__(self, guild_id: int, boss_name: str, disabled: bool = False):
         super().__init__(timeout=None)
         self.add_item(discord.ui.Button(
             label="✅ 컷",
             style=discord.ButtonStyle.success,
-            custom_id=f"boss_cut:{guild_id}:{boss_name}",
+            custom_id=boss_component_custom_id("cut", guild_id, boss_name),
             disabled=disabled,
         ))
         self.add_item(discord.ui.Button(
             label="😶 멍",
             style=discord.ButtonStyle.secondary,
-            custom_id=f"boss_miss:{guild_id}:{boss_name}",
+            custom_id=boss_component_custom_id("miss", guild_id, boss_name),
             disabled=disabled,
         ))
 
@@ -292,30 +299,82 @@ class Boss(commands.Cog):
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
-        """버튼 상호작용 처리 — 봇 재시작 후에도 custom_id로 동작"""
+        """Dispatch registered buttons after acknowledging the Discord click."""
         if interaction.type != discord.InteractionType.component:
             return
         custom_id = (interaction.data or {}).get("custom_id", "")
-        if not custom_id.startswith(("boss_cut:", "boss_miss:")):
+        if not isinstance(custom_id, str):
+            return
+        guild_id = getattr(getattr(interaction, "guild", None), "id", None)
+        message = getattr(interaction, "message", None)
+        message_id = getattr(message, "id", None)
+        if guild_id is None or message_id is None:
+            return
+        action = COMPONENT_ACTIONS.resolve(custom_id, int(guild_id), int(message_id))
+        if action is None and not custom_id.startswith(LEGACY_COMPONENT_PREFIXES):
+            # Another cog may own this component. Unregistered buttons are
+            # never executed from this cog.
             return
 
-        try:
-            prefix, guild_id_str, boss_name = custom_id.split(":", 2)
-        except ValueError:
-            return
-
-        action = "cut" if prefix == "boss_cut" else "miss"
-        guild_id = int(guild_id_str)
-
-        await interaction.response.edit_message(
-            view=BossActionView(guild_id, boss_name, disabled=True)
+        response = getattr(interaction, "response", None)
+        if response is not None and not response.is_done():
+            await response.defer(ephemeral=True, thinking=True)
+        member_permissions = getattr(getattr(interaction, "user", None), "guild_permissions", None)
+        interaction_permissions = getattr(interaction, "permissions", None)
+        is_admin = bool(
+            getattr(member_permissions, "administrator", False)
+            or getattr(interaction_permissions, "administrator", False)
         )
-        result = await self._do_cut_miss(guild_id, boss_name, action, user=interaction.user)
-        channel = interaction.channel
-        if isinstance(result, str):
-            await channel.send(result)
-        else:
-            await channel.send(embed=result)
+        actor = interaction.user
+        result = await ComponentActionDispatcher(self.bot).dispatch(
+            request_id=f"discord:{getattr(interaction, 'id', message_id)}",
+            guild_id=int(guild_id),
+            message_id=int(message_id),
+            custom_id=custom_id,
+            actor=actor,
+            actor_type="discord",
+            actor_ref=f"discord:{getattr(actor, 'id', 'unknown')}",
+            is_owner=is_admin,
+            message=message,
+        )
+        followup = getattr(interaction, "followup", None)
+        if followup is None:
+            return
+        if result.status == "succeeded":
+            await followup.send("처리했어. 결과는 채널에 공유됐어.", ephemeral=True)
+        elif result.status == "already_processed":
+            await followup.send("이미 처리된 보스 알림입니다.", ephemeral=True)
+        elif not result.succeeded:
+            await followup.send(result.error_message or "버튼 처리에 실패했습니다.", ephemeral=True)
+
+    async def execute_registered_component(
+        self,
+        *,
+        action: RegisteredComponentAction,
+        message: discord.Message,
+        actor: discord.User | discord.Member,
+    ) -> discord.Embed | str:
+        """The common dispatcher calls this for every registered boss action."""
+        try:
+            guild_id = int(action.params["guild_id"])
+            boss_name = action.params["boss_name"]
+        except (KeyError, TypeError, ValueError):
+            return "❌ 실행할 보스 정보를 확인할 수 없습니다."
+        if message.guild is None or int(message.guild.id) != guild_id:
+            return "❌ 다른 서버의 보스 알림은 처리할 수 없습니다."
+        action_name = "cut" if action.key == "boss_cut" else "miss"
+        return await self._do_cut_miss(guild_id, boss_name, action_name, user=actor)
+
+    async def disable_registered_component(
+        self,
+        *,
+        message: discord.Message,
+        action: RegisteredComponentAction,
+    ) -> discord.Message:
+        """Disable the entire mutually-exclusive boss action group on success."""
+        guild_id = int(action.params["guild_id"])
+        boss_name = action.params["boss_name"]
+        return await message.edit(view=BossActionView(guild_id, boss_name, disabled=True))
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
