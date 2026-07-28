@@ -70,8 +70,8 @@ def _build_embeds(bn: int) -> list[discord.Embed]:
     e.add_field(name="목록 확인", value=(
         "`보탐` / `ㅂㅌ` / `ㅋ` / `z` — 가까운 5건 (고정 제외)\n"
         "`보탐+` / `ㅂㅌ+` / `ㅋ+` / `z+` — 전체 목록 (고정 포함)\n"
-        "`Z` — 가까운 5건 + 1순위 보스 TTS 읽기\n"
-        "`Z+` — 전체 목록 + TTS"
+        "`Z` — 가까운 5건 (텍스트 전용)\n"
+        "`Z+` — 전체 목록 (텍스트 전용)"
     ), inline=False)
     e.add_field(name="초기화", value=(
         "`전체삭제` / `초기화` / `보스전체삭제`\n"
@@ -139,7 +139,6 @@ def _build_embeds(bn: int) -> list[discord.Embed]:
     e.add_field(name="​", value=(
         "`v 텍스트` / `ㅍ 텍스트` — 음성 채널에서 읽어줌 (Google TTS)\n"
         "　　정각 알림 시 보스명 + 남은시간 자동 읽기\n"
-        "　　`Z` 명령 시 1순위 보스 TTS 읽기\n"
         "`정신차려` / `재시작` — 봇 프로세스 전체 재시작"
     ), inline=False)
     embeds.append(e)
