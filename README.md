@@ -232,7 +232,9 @@ are intended to speak:
   claim, or otherwise invoke TTS. Lowercase reservation-list aliases follow the
   same rule.
 - Scheduled exact-time boss alerts retain their existing automatic TTS; this
-  background behavior is independent of manual command routing.
+  background behavior is independent of manual command routing. Repeated miss
+  counts keep the `(미입력×N)` display notation but are spoken once as
+  `미입력 N회`, preventing the miss label from being repeated N times.
 
 The DAVE/voice dependency and the exact local and container checks are defined
 in [`docs/tts-dave-pilot.md`](docs/tts-dave-pilot.md). The rollout is a
@@ -453,7 +455,8 @@ v 좋은 아침입니다          ← same
 must never create a TTS job. The same rule applies to `z`, `z+`, `보탐`, and
 `보탐+`. Scheduled exact-time boss alerts continue to send their existing
 automatic Discord notification and automatic TTS independently of these
-manual commands.
+manual commands. A repeated miss count is displayed as `(미입력×N)` and spoken
+once as `미입력 N회`; zero misses omit that phrase.
 
 ---
 

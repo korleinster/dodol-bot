@@ -74,6 +74,12 @@ def fmt_remain(delta: timedelta) -> str:
         return "출현 중"
 
 
+def format_schedule_tts(content: str, miss_count: int, remain: str) -> str:
+    """Build a compact exact-time alert without repeating miss text."""
+    miss = f" 미입력 {miss_count}회" if miss_count > 0 else ""
+    return f"{content}{miss} {remain}"
+
+
 def now() -> datetime:
     return datetime.now(KST).replace(tzinfo=None)
 
@@ -1219,7 +1225,7 @@ class Boss(commands.Cog):
             if tts_cog:
                 await tts_cog.speak(
                     channel.guild,
-                    f"{r['content']} {'미입력' * r['miss_count']} {remain}",
+                    format_schedule_tts(r["content"], r["miss_count"], remain),
                 )
 
         # ── 고정 일정 보스 자동 예약 생성 ────────────────
