@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from src import db as db_module
 from src.cogs import boss as boss_module
-from src.cogs.boss import Boss
+from src.cogs.boss import Boss, format_schedule_tts
 from src.web_bridge import WebBridge, _scheduler_health_payload
 
 
@@ -52,6 +52,24 @@ class ManualBossTtsPolicyTest(unittest.IsolatedAsyncioTestCase):
                     include_fixed=include_fixed,
                 )
                 cog.bot.get_cog.assert_not_called()
+
+
+class ScheduleTtsTextTest(unittest.TestCase):
+    def test_zero_misses_are_omitted(self):
+        self.assertEqual(
+            format_schedule_tts("발록", 0, "출현 중"),
+            "발록 출현 중",
+        )
+
+    def test_miss_count_is_spoken_once(self):
+        for miss_count in (1, 30):
+            with self.subTest(miss_count=miss_count):
+                spoken = format_schedule_tts("발록", miss_count, "출현 중")
+                self.assertEqual(
+                    spoken,
+                    f"발록 미입력 {miss_count}회 출현 중",
+                )
+                self.assertEqual(spoken.count("미입력"), 1)
 
 
 class SchedulerRecoveryTest(unittest.IsolatedAsyncioTestCase):
@@ -260,9 +278,9 @@ class SchedulerRecoveryTest(unittest.IsolatedAsyncioTestCase):
         )
         connection.execute(
             """INSERT INTO schedules
-               (guild_id, bot_number, content, scheduled_at)
-               VALUES (?,?,?,?)""",
-            (100, 3, "임의 예약", scheduled_at.isoformat()),
+               (guild_id, bot_number, content, scheduled_at, miss_count)
+               VALUES (?,?,?,?,?)""",
+            (100, 3, "임의 예약", scheduled_at.isoformat(), 30),
         )
         connection.commit()
         connection.close()
@@ -285,6 +303,11 @@ class SchedulerRecoveryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(channel.send.await_count, 1)
         self.assertEqual(tts.speak.await_count, 1)
+        self.assertEqual(
+            tts.speak.await_args.args[1],
+            "임의 예약 미입력 30회 출현 중",
+        )
+        self.assertEqual(tts.speak.await_args.args[1].count("미입력"), 1)
         self.assertEqual(self._rows(
             "SELECT notified, warned_5min, warned_1min FROM schedules"
         ), [{
