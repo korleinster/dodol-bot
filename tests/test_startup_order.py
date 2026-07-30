@@ -16,9 +16,9 @@ class _FakeBridge:
 
 
 class _FakeBot:
-    def __init__(self):
+    def __init__(self, bot_number=3):
         self.calls = []
-        self.bot_number = 3
+        self.bot_number = bot_number
         self._ready_count = 0
         self._bridge_start_error_code = None
         self._bridge_start_error_reported = False
@@ -71,17 +71,20 @@ class StartupLifecycleTest(unittest.IsolatedAsyncioTestCase):
         self.assertLess(bot.calls.index("bridge.start"), bot.calls.index("connect:True"))
         self.assertEqual(bot.calls[-2:], ["bridge.close", "bot.close"])
 
-    async def test_bridge_failure_is_fail_open_for_discord(self):
-        bot = _FakeBot()
-        with patch(
-            "src.web_bridge.start_web_bridge",
-            new=AsyncMock(side_effect=RuntimeError("socket unavailable")),
-        ):
-            await bot_main.run_bot(3, "token", bot)
+    async def test_bridge_failure_is_fail_open_for_all_bridge_bots_and_scheduler(self):
+        for bot_number in range(1, 5):
+            with self.subTest(bot_number=bot_number):
+                bot = _FakeBot(bot_number)
+                with patch(
+                    "src.web_bridge.start_web_bridge",
+                    new=AsyncMock(side_effect=RuntimeError("socket unavailable")),
+                ):
+                    await bot_main.run_bot(bot_number, "token", bot)
 
-        self.assertEqual(bot._bridge_start_error_code, "BRIDGE_START_FAILED")
-        self.assertIn("connect:True", bot.calls)
-        self.assertEqual(bot.calls[-1], "bot.close")
+                self.assertEqual(bot._bridge_start_error_code, "BRIDGE_START_FAILED")
+                self.assertEqual(bot.scheduler_health["status"], "starting")
+                self.assertIn("connect:True", bot.calls)
+                self.assertEqual(bot.calls[-1], "bot.close")
 
     async def test_fatal_bot_startup_is_not_swallowed(self):
         bot = _FakeBot()

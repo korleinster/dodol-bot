@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import os
 import sqlite3
 import sys
 import tempfile
@@ -24,8 +25,9 @@ if "gtts" not in sys.modules:
 
 from src import db as db_module
 from src.cogs import tts as tts_module
+from src.cogs.minigame import Minigame
 from src.cogs.tts import TTS, parse_tts_command
-from src.web_bridge import WebBridge, _actor_id, _is_tts_command
+from src.web_bridge import WebBridge, _actor_id, _is_tts_command, start_web_bridge
 
 
 class WebBridgePolicyTest(unittest.TestCase):
@@ -107,6 +109,15 @@ class VoiceRuntimeCapabilityTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(played)
         save_tts.assert_not_called()
 
+    async def test_speak_fails_before_file_generation_without_a_configured_voice_channel(self):
+        cog = TTS(SimpleNamespace(bot_number=2))
+        cog._voice_runtime_ready = Mock(return_value=True)
+        cog.get_voice_channel = AsyncMock(return_value=None)
+        with patch.object(tts_module, "_save_tts") as save_tts:
+            played = await cog.speak(SimpleNamespace(id=100), "테스트")
+        self.assertFalse(played)
+        save_tts.assert_not_called()
+
 
 class ContributionMigrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_actor_columns_are_added_without_rebuilding_existing_rows(self):
@@ -121,6 +132,69 @@ class ContributionMigrationTest(unittest.IsolatedAsyncioTestCase):
                 conn.close()
                 self.assertIn("actor_type", columns)
                 self.assertIn("actor_ref", columns)
+            finally:
+                db_module.DB_PATH = previous
+
+    async def test_shared_bridge_rows_backfill_to_bot_003_additively(self):
+        previous = db_module.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bot.db"
+            conn = sqlite3.connect(path)
+            conn.executescript("""
+                CREATE TABLE web_broadcast_event (
+                    cursor INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_key TEXT NOT NULL UNIQUE,
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    content TEXT,
+                    embeds_json TEXT NOT NULL DEFAULT '[]',
+                    attachments_json TEXT NOT NULL DEFAULT '[]',
+                    components_json TEXT NOT NULL DEFAULT '[]',
+                    created_at INTEGER NOT NULL
+                );
+                CREATE TABLE component_action_claim (
+                    idempotency_key TEXT PRIMARY KEY,
+                    request_id TEXT NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    custom_id TEXT NOT NULL,
+                    action_key TEXT NOT NULL,
+                    actor_type TEXT NOT NULL,
+                    actor_ref TEXT,
+                    status TEXT NOT NULL,
+                    error_code TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    completed_at INTEGER
+                );
+                INSERT INTO web_broadcast_event
+                    (event_key, guild_id, channel_id, message_id, kind, created_at)
+                    VALUES ('message:1', 100, 200, 1, 'message', 1);
+                INSERT INTO component_action_claim
+                    (idempotency_key, request_id, guild_id, channel_id, message_id,
+                     custom_id, action_key, actor_type, status, created_at, updated_at)
+                    VALUES ('boss-message:100:1', 'legacy-request', 100, 200, 1,
+                            'legacy', 'boss_cut', 'web_guest', 'succeeded', 1, 1);
+            """)
+            conn.commit()
+            conn.close()
+            db_module.DB_PATH = path
+            try:
+                await db_module.init_db()
+                conn = sqlite3.connect(path)
+                broadcast = conn.execute(
+                    "SELECT bot_number, event_key FROM web_broadcast_event",
+                ).fetchone()
+                claim = conn.execute(
+                    "SELECT bot_number, idempotency_key FROM component_action_claim",
+                ).fetchone()
+                conn.close()
+                self.assertEqual(broadcast, (3, "message:1"))
+                self.assertEqual(claim, (3, "boss-message:100:1"))
             finally:
                 db_module.DB_PATH = previous
 
@@ -208,15 +282,25 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
                 "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?, ?, ?)",
                 (101, 3, 201),
             )
+            await db.execute(
+                """INSERT INTO guild_config
+                   (guild_id, bot_number, text_channel_id, voice_channel_id)
+                   VALUES (?, ?, ?, ?)""",
+                (100, 1, 300, 350),
+            )
             await db.commit()
-        self.bot = SimpleNamespace(bot_number=3, user=SimpleNamespace(id=999))
+        self.bot = SimpleNamespace(
+            bot_number=3,
+            user=SimpleNamespace(id=999),
+            get_guild=lambda guild_id: SimpleNamespace(id=guild_id, name=f"길드 {guild_id}"),
+        )
         self.bridge = WebBridge(self.bot, "b" * 32, Path(self.tmp.name) / "bridge.sock")
 
     async def asyncTearDown(self):
         db_module.DB_PATH = self.previous_path
         self.tmp.cleanup()
 
-    async def test_filters_to_003_own_configured_guild_channel(self):
+    async def test_filters_to_current_bots_own_configured_guild_channel(self):
         await self.bridge._on_broadcast_message(_FakeMessage(message_id=1))
         await self.bridge._on_broadcast_message(_FakeMessage(message_id=2, author_id=998))
         await self.bridge._on_broadcast_message(_FakeMessage(message_id=3, channel_id=201))
@@ -226,6 +310,30 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cursor, events[-1]["cursor"])
         self.assertEqual([event["messageId"] for event in events], ["1"])
         self.assertEqual(events[0]["content"], "안녕 <@123>")
+        self.assertEqual(events[0]["botNumber"], 3)
+
+    async def test_same_guild_and_message_are_isolated_between_bots(self):
+        bot1 = SimpleNamespace(bot_number=1, user=SimpleNamespace(id=111))
+        bridge1 = WebBridge(bot1, "a" * 32, Path(self.tmp.name) / "bridge-001.sock")
+        await self.bridge._on_broadcast_message(_FakeMessage(message_id=77))
+        await bridge1._on_broadcast_message(
+            _FakeMessage(message_id=77, channel_id=300, author_id=111),
+        )
+
+        bot3_events, _ = await db_module.list_web_broadcast_events(
+            bot_number=3, guild_id=100,
+        )
+        bot1_events, _ = await db_module.list_web_broadcast_events(
+            bot_number=1, guild_id=100,
+        )
+        self.assertEqual(
+            [(item["botNumber"], item["messageId"]) for item in bot3_events],
+            [(3, "77")],
+        )
+        self.assertEqual(
+            [(item["botNumber"], item["messageId"]) for item in bot1_events],
+            [(1, "77")],
+        )
 
     async def test_create_update_delete_are_deduplicated_and_preserve_message_id(self):
         created = _FakeMessage(
@@ -328,20 +436,39 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["messageId"], "1500")
         self.assertNotIn("9000", {event["messageId"] for event in events})
 
-    async def test_003_only_listener_registration_and_capture(self):
+    async def test_001_listener_registration_and_capture(self):
         calls = []
         bot = SimpleNamespace(
             bot_number=1,
-            user=SimpleNamespace(id=999),
+            user=SimpleNamespace(id=111),
             add_listener=lambda *args: calls.append(args),
             remove_listener=lambda *args: calls.append(args),
         )
         bridge = WebBridge(bot, "b" * 32, Path(self.tmp.name) / "unused.sock")
         bridge._register_broadcast_listeners()
-        await bridge._on_broadcast_message(_FakeMessage(message_id=33))
-        events, _ = await db_module.list_web_broadcast_events(guild_id=100)
+        await bridge._on_broadcast_message(
+            _FakeMessage(message_id=33, channel_id=300, author_id=111),
+        )
+        events, _ = await db_module.list_web_broadcast_events(
+            bot_number=1, guild_id=100,
+        )
+        self.assertEqual(len(calls), 4)
+        self.assertEqual([item["messageId"] for item in events], ["33"])
+
+    async def test_out_of_scope_bot_does_not_register_or_capture(self):
+        calls = []
+        bot = SimpleNamespace(
+            bot_number=5,
+            user=SimpleNamespace(id=555),
+            add_listener=lambda *args: calls.append(args),
+            remove_listener=lambda *args: calls.append(args),
+        )
+        bridge = WebBridge(bot, "b" * 32, Path(self.tmp.name) / "unused-005.sock")
+        bridge._register_broadcast_listeners()
+        await bridge._on_broadcast_message(
+            _FakeMessage(message_id=34, channel_id=300, author_id=555),
+        )
         self.assertEqual(calls, [])
-        self.assertEqual(events, [])
 
     async def test_hmac_broadcast_endpoint_binds_query_and_returns_contract(self):
         await self.bridge._on_broadcast_message(_FakeMessage(message_id=50))
@@ -371,6 +498,165 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
                     "x-lc-signature": signature,
                 },
             ))
+
+    async def test_targets_expose_tts_capability_only_with_voice_configuration(self):
+        self.bridge._authenticate = AsyncMock(return_value=b"")
+        response = await self.bridge.targets(SimpleNamespace())
+        payload = json.loads(response.body)
+        targets = {item["guildId"]: item for item in payload["targets"]}
+        self.assertFalse(targets["100"]["capabilities"]["tts"])
+        self.assertFalse(targets["101"]["capabilities"]["tts"])
+        self.assertTrue(targets["100"]["capabilities"]["commands"])
+
+        bot1 = SimpleNamespace(
+            bot_number=1,
+            user=SimpleNamespace(id=111),
+            get_guild=lambda guild_id: SimpleNamespace(id=guild_id, name="길드"),
+        )
+        bridge1 = WebBridge(bot1, "a" * 32, Path(self.tmp.name) / "bridge-001.sock")
+        bridge1._authenticate = AsyncMock(return_value=b"")
+        response1 = await bridge1.targets(SimpleNamespace())
+        target1 = json.loads(response1.body)["targets"][0]
+        self.assertEqual(target1["botNumber"], 1)
+        self.assertTrue(target1["capabilities"]["tts"])
+
+    async def test_tts_without_voice_is_rejected_before_job_or_queue_creation(self):
+        self.bridge._json = AsyncMock(return_value={
+            "requestId": "request-tts-001",
+            "command": "v 테스트",
+            "actorRef": "guest:session",
+            "nickname": "테스터",
+            "guildId": "101",
+        })
+        with self.assertRaises(web.HTTPConflict) as raised:
+            await self.bridge.create_command(SimpleNamespace())
+        payload = json.loads(raised.exception.text)
+        self.assertEqual(payload["errorCode"], "TTS_UNAVAILABLE")
+        self.assertIn("음성 채널", payload["recoveryInstructions"])
+        self.assertEqual(self.bridge.jobs, {})
+        self.assertEqual(self.bridge.tts_pending, 0)
+
+
+class WebBridgeEnvironmentTest(unittest.IsolatedAsyncioTestCase):
+    async def test_numbered_secret_and_socket_are_used_for_each_bridge_bot(self):
+        for bot_number in range(1, 5):
+            label = f"{bot_number:03d}"
+            socket_path = f"/tmp/test-botam-{label}.sock"
+            env = {
+                "BOTAM_WEB_BRIDGE_ENABLED": "true",
+                f"BOTAM_BRIDGE_{label}_SECRET": label * 11,
+                f"BOTAM_BRIDGE_{label}_SOCKET": socket_path,
+            }
+            with (
+                self.subTest(bot_number=bot_number),
+                patch.dict(os.environ, env, clear=True),
+                patch.object(WebBridge, "start", new=AsyncMock()),
+            ):
+                bridge = await start_web_bridge(SimpleNamespace(bot_number=bot_number))
+                self.assertIsNotNone(bridge)
+                self.assertEqual(bridge.secret, (label * 11).encode())
+                self.assertEqual(bridge.socket_path, Path(socket_path))
+
+    async def test_legacy_unnumbered_fallback_is_limited_to_bot_003(self):
+        env = {
+            "BOTAM_WEB_BRIDGE_ENABLED": "true",
+            "BOTAM_BRIDGE_SECRET": "legacy-" * 6,
+            "BOTAM_BRIDGE_SOCKET": "/tmp/legacy-003.sock",
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(WebBridge, "start", new=AsyncMock()),
+        ):
+            bridge = await start_web_bridge(SimpleNamespace(bot_number=3))
+            self.assertIsNotNone(bridge)
+            self.assertEqual(bridge.socket_path, Path("/tmp/legacy-003.sock"))
+            with self.assertRaisesRegex(RuntimeError, "BOTAM_BRIDGE_001_SECRET"):
+                await start_web_bridge(SimpleNamespace(bot_number=1))
+
+    async def test_bot_003_can_pair_legacy_secret_with_numbered_socket_during_transition(self):
+        env = {
+            "BOTAM_WEB_BRIDGE_ENABLED": "true",
+            "BOTAM_BRIDGE_SECRET": "legacy-" * 6,
+            "BOTAM_BRIDGE_003_SOCKET": "/tmp/numbered-003.sock",
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(WebBridge, "start", new=AsyncMock()),
+        ):
+            bridge = await start_web_bridge(SimpleNamespace(bot_number=3))
+        self.assertIsNotNone(bridge)
+        self.assertEqual(bridge.secret, ("legacy-" * 6).encode())
+        self.assertEqual(bridge.socket_path, Path("/tmp/numbered-003.sock"))
+
+    async def test_partial_bridge_startup_is_cleaned_before_error_propagates(self):
+        env = {
+            "BOTAM_WEB_BRIDGE_ENABLED": "true",
+            "BOTAM_BRIDGE_004_SECRET": "four-" * 8,
+            "BOTAM_BRIDGE_004_SOCKET": "/tmp/failing-004.sock",
+        }
+        close = AsyncMock()
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(
+                WebBridge,
+                "start",
+                new=AsyncMock(side_effect=RuntimeError("socket unavailable")),
+            ),
+            patch.object(WebBridge, "close", new=close),
+            self.assertRaisesRegex(RuntimeError, "socket unavailable"),
+        ):
+            await start_web_bridge(SimpleNamespace(bot_number=4))
+        close.assert_awaited_once()
+
+
+class MinigameIsolationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_lottery_draw_rejects_a_different_guild_without_consuming_session(self):
+        cog = Minigame(SimpleNamespace(bot_number=2))
+        cog.lottery_sessions[50] = {
+            "author_ref": "guest:session",
+            "bot_number": 2,
+            "guild_id": 100,
+            "participants": {"A"},
+            "n": 1,
+            "message": SimpleNamespace(channel=SimpleNamespace(send=AsyncMock())),
+        }
+        output = SimpleNamespace(send=AsyncMock())
+        rejected = await cog.finish_lottery(
+            50, "guest:session", output, guild_id=101,
+        )
+        self.assertIn("다른 서버", rejected)
+        self.assertIn(50, cog.lottery_sessions)
+        output.send.assert_not_awaited()
+
+        accepted = await cog.finish_lottery(
+            50, "guest:session", output, guild_id=100,
+        )
+        self.assertNotIsInstance(accepted, str)
+        self.assertNotIn(50, cog.lottery_sessions)
+
+    async def test_rankings_are_isolated_by_bot_instance_and_guild(self):
+        cog = Minigame(SimpleNamespace(bot_number=2))
+        cog.scores[(100, 7)] = 10
+        cog.score_names[(100, 7)] = "길드100"
+        cog.scores[(101, 8)] = 20
+        cog.score_names[(101, 8)] = "길드101"
+
+        channel = SimpleNamespace(send=AsyncMock())
+        message = SimpleNamespace(
+            guild=SimpleNamespace(id=100, get_member=lambda _uid: None),
+            channel=channel,
+        )
+        await cog._cmd_ranking(message)
+        sent_embed = channel.send.await_args.kwargs["embed"]
+        self.assertEqual([field.name for field in sent_embed.fields], ["1위 길드100"])
+
+        other_bot = Minigame(SimpleNamespace(bot_number=3))
+        other_channel = SimpleNamespace(send=AsyncMock())
+        await other_bot._cmd_ranking(SimpleNamespace(
+            guild=SimpleNamespace(id=100, get_member=lambda _uid: None),
+            channel=other_channel,
+        ))
+        other_channel.send.assert_awaited_once_with("아직 점수가 없습니다.")
 
 
 if __name__ == "__main__":

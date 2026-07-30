@@ -81,6 +81,18 @@ done
 | 시크릿 | `fly secrets` | `.env` 파일 |
 | 봇 수 | 001~003 | 001~004 |
 
+## M44/W8 deployment boundary (2026-07-30)
+
+The local multi-bot bridge implementation and production rollout are
+owner-approved; evidence remains pending. Each bot receives a separate token,
+numbered Unix socket, and separately sourced HMAC secret at runtime; secrets
+are never copied into the shared image or committed files. Build the hardened
+multi-stage image once, then recreate services sequentially `004 → 001 → 002 →
+003`, recording health and socket/capability evidence before each next step.
+If a gate fails, roll back only that bot and stop; later bots remain untouched.
+Preserve the database. No new port is opened
+and Tailscale configuration is unchanged.
+
 ### 2026-06-08: Fly.io DR 이중화 추가
 
 맥미니 장애 대비 fly.io를 staging 상태로 상시 대기.  

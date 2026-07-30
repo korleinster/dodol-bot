@@ -280,7 +280,7 @@ class Boss(commands.Cog):
             await alert(
                 self.bot,
                 self.bn,
-                f"{context} ({error_code}). 003 봇 상태와 스케줄러 로그를 확인해주세요.",
+                f"{context} ({error_code}). {self.bn:03d} 봇 상태와 스케줄러 로그를 확인해주세요.",
             )
         except Exception as alert_error:
             # Monitoring failure must never turn a recoverable scheduler error

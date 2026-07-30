@@ -30,8 +30,8 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 7. [Telegram Broadcast](#telegram-broadcast)
 8. [Ubuntu + Docker Deployment](#ubuntu--docker-deployment)
 9. [Project Structure](#project-structure)
-10. [Bot 003 Web Bridge Pilot](#bot-003-web-bridge-pilot)
-11. [W6 TTS/DAVE Pilot (Bot 003 Only)](#w6-ttsdave-pilot-bot-003-only)
+10. [Multi-Bot Web Bridge](#multi-bot-web-bridge)
+11. [TTS and Voice Runtime](#tts-and-voice-runtime)
 
 ---
 
@@ -136,36 +136,32 @@ When you first add the bot to a server, deploy it with the `소환 뚠뚠봇001`
 - The voice channel is automatically set to the voice room the user is **currently in** when the command is issued.
 - After deployment, commands only work in the configured text channel.
 
-## Bot 003 Web Bridge Pilot
+## Multi-Bot Web Bridge
 
-The optional web bridge reuses the existing Discord command handlers through a
-local Unix socket. It does not open a TCP port and is enabled only when both
-`BOT_NUMBER=3` and `BOTAM_WEB_BRIDGE_ENABLED=1` are present.
+Bots 001–004 reuse the existing Discord command handlers through separate local
+Unix sockets. No TCP port is opened. A process starts its bridge only when
+`BOTAM_WEB_BRIDGE_ENABLED=1` and its numbered secret and socket configuration
+match `BOT_NUMBER`.
 
-Docker Compose configures the socket at `/app/data/botam-003.sock`. Requests are
-authenticated with a dedicated HMAC secret, timestamp, nonce, and body digest.
-The socket is mode `0660` and may be assigned to the host service group with
-`BOTAM_BRIDGE_GID`.
+Docker Compose configures `/app/data/botam-001.sock` through
+`/app/data/botam-004.sock`. Every bot has a distinct
+`BOTAM_BRIDGE_00N_SECRET`; requests include an HMAC signature, timestamp, nonce,
+and body digest. Sockets use mode `0660` and may be assigned to the host service
+group with `BOTAM_BRIDGE_GID`. Secrets belong in ignored, permission-restricted
+host environment sources and must never be committed or copied into the image.
 
-Keep the bridge secret out of the shared `.env` so 001, 002, and 004 never
-receive it. Create the ignored bot-003-only file before the pilot deployment:
+Authenticated guests may use Botam, reset, utilities, mini-games, and
+policy-approved component actions. Process restart, bot summon, channel
+settings, logs, deployment, and container controls remain owner-only and are
+rejected by the bridge.
 
-```bash
-cp botam-003-bridge.env.example botam-003-bridge.env
-# Replace the placeholder with a distinct 32+ character secret.
-```
-
-The pilot exposes Botam, TTS, reset, and mini-games to an authenticated web
-guest. Process restart, bot summon, channel settings, logs, deployment, and
-container controls remain owner-only and are rejected by the bridge. TTS text
-is limited to 200 characters with at most three pending web jobs.
-
-Bot 003 also mirrors every message it authors in its configured Discord text
-channel to authenticated web guests for that guild. The feed includes automatic
-alerts, command replies, utilities, games, lifecycle notices, message edits,
-and deletes. It excludes human messages, other bots, DMs, and non-configured
-channels. The additive event log keeps up to 24 hours and 500 events per guild;
-the authenticated cursor endpoint replays at most 100 events per request.
+Each bot mirrors only its own bot-authored messages from its configured Discord
+text channel to authenticated web guests for that bot and guild. The feed
+includes automatic alerts, command replies, utilities, games, lifecycle
+notices, message edits, and deletes. It excludes human messages, other bots,
+DMs, and non-configured channels. The additive event log keeps up to 24 hours
+and 500 events per bot and guild; the authenticated cursor endpoint replays at
+most 100 events per request.
 
 ### Shared Discord component actions (M42)
 
@@ -189,7 +185,7 @@ controls are omitted from guest feeds while remaining visible in the owner
 audit feed. Messages created before M42 are therefore safe to display but are
 not silently upgraded into executable controls.
 
-The signed bot-003 bridge action endpoint is
+The signed per-bot bridge action endpoint is
 `POST /internal/v1/component-actions`. It validates the original bot-authored
 message, configured text channel, custom ID, and current component state before
 calling the shared handler. Cut and miss buttons on one boss message share a
@@ -210,21 +206,15 @@ sequence. An optional bridge startup failure does not stop Discord commands or
 boss scheduling, while a fatal Discord startup error still exits the single-bot
 container for supervisor recovery.
 
-Builds may contain the shared bridge code, but the M42 pilot implementation and
-deployment target only `dodol-bot-003`:
+The approved W8 rollout recreates one service at a time in the order
+`004 → 001 → 002 → 003`, with a health gate after every bot. If a gate fails,
+roll back only that bot and stop before touching later bots. See
+[`docs/web-bridge-pilot.md`](docs/web-bridge-pilot.md) for the full security,
+verification, and recovery contract.
 
-```bash
-docker compose up -d --no-deps dodol-bot-003
-```
+## TTS and Voice Runtime
 
-Do not recreate, restart, or reconfigure 001, 002, or 004 as part of the pilot.
-See [`docs/web-bridge-pilot.md`](docs/web-bridge-pilot.md) for verification and
-recovery details.
-
-## W6 TTS/DAVE Pilot (Bot 003 Only)
-
-Revision 2 keeps the voice change narrowly scoped to the manual commands that
-are intended to speak:
+Manual voice behavior is deliberately narrow:
 
 - `v <text>` and `ㅍ <text>` are the only manual TTS entrypoints. They enqueue
   voice playback (subject to the existing web queue limit).
@@ -236,13 +226,11 @@ are intended to speak:
   counts keep the `(미입력×N)` display notation but are spoken once as
   `미입력 N회`, preventing the miss label from being repeated N times.
 
-The DAVE/voice dependency and the exact local and container checks are defined
-in [`docs/tts-dave-pilot.md`](docs/tts-dave-pilot.md). The rollout is a
-bot-003-only pilot: build the shared image if needed, then recreate only
-`dodol-bot-003`. Do not recreate, restart, or reconfigure `dodol-bot-001`,
-`dodol-bot-002`, or `dodol-bot-004`; capture their container IDs and start times
-before and after the change. Rollback also recreates only bot 003 from the
-previous image tag.
+The DAVE/voice dependency and exact local and container checks are defined in
+[`docs/tts-dave-pilot.md`](docs/tts-dave-pilot.md). Each target advertises TTS
+only when its voice channel is configured and the pinned runtime is healthy.
+Bots without a voice channel keep commands, components, and games available but
+return a safe TTS-unavailable response.
 
 ---
 
