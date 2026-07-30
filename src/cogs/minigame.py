@@ -5,16 +5,17 @@ import random
 import discord
 from discord.ext import commands
 
-scores: dict[int, int] = {}
-score_names: dict[int, str] = {}
-
-
 class Minigame(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.bn  = bot.bot_number
         self.guess_games: dict[int, int] = {}
         self.lottery_sessions: dict[int, dict] = {}
+        # Scores are in-memory by design, but must still be isolated by the
+        # exact bot cog and guild. A module-global user ID scoreboard mixed
+        # legacy multi-bot instances and unrelated Discord guilds.
+        self.scores: dict[tuple[int, int], int] = {}
+        self.score_names: dict[tuple[int, int], str] = {}
 
     async def get_text_channel(self, guild_id: int) -> int | None:
         from src.db import get_db
@@ -75,8 +76,11 @@ class Minigame(commands.Cog):
             else:
                 del self.guess_games[ch]
                 uid = message.author.id
-                scores[uid] = scores.get(uid, 0) + 10
-                score_names[uid] = getattr(message.author, "display_name", None) or message.author.name
+                score_key = (int(message.guild.id), int(uid))
+                self.scores[score_key] = self.scores.get(score_key, 0) + 10
+                self.score_names[score_key] = (
+                    getattr(message.author, "display_name", None) or message.author.name
+                )
                 await message.channel.send(f"🎉 {message.author.mention} 정답 **{secret}**! (+10점)")
 
         elif head.startswith("경마"):
@@ -174,6 +178,8 @@ class Minigame(commands.Cog):
         session = {
             "author": message.author.id,
             "author_ref": getattr(message.author, "actor_ref", f"discord:{message.author.id}"),
+            "bot_number": self.bn,
+            "guild_id": int(message.guild.id),
             "n": n,
             "participants": set(manual),
             "msg_id": None,
@@ -212,18 +218,43 @@ class Minigame(commands.Cog):
             return
 
         session = self.lottery_sessions[msg_id]
+        guild_id = getattr(getattr(reaction.message, "guild", None), "id", None)
+        if (
+            session.get("bot_number") != self.bn
+            or guild_id is None
+            or session.get("guild_id") != int(guild_id)
+        ):
+            return
 
         if str(reaction.emoji) == "📥":
             session["participants"].add(user.display_name)
 
         elif str(reaction.emoji) == "📤" and user.id == session["author"]:
-            await self.finish_lottery(msg_id, f"discord:{user.id}", reaction.message.channel)
+            await self.finish_lottery(
+                msg_id,
+                f"discord:{user.id}",
+                reaction.message.channel,
+                guild_id=int(guild_id),
+            )
 
-    async def finish_lottery(self, msg_id: int, actor_ref: str, output_channel=None) -> discord.Embed | str:
+    async def finish_lottery(
+        self,
+        msg_id: int,
+        actor_ref: str,
+        output_channel=None,
+        *,
+        guild_id: int | None = None,
+    ) -> discord.Embed | str:
         """웹 또는 Discord에서 시작한 뽑기를 동일한 세션 규칙으로 종료한다."""
         session = self.lottery_sessions.get(msg_id)
         if not session:
             return "진행 중인 뽑기가 없습니다."
+        if (
+            session.get("bot_number") != self.bn
+            or guild_id is None
+            or session.get("guild_id") != guild_id
+        ):
+            return "다른 서버의 뽑기는 추첨할 수 없습니다."
         if session["author_ref"] != actor_ref:
             return "뽑기를 시작한 사용자만 추첨할 수 있습니다."
 
@@ -250,14 +281,23 @@ class Minigame(commands.Cog):
     # ── 랭킹 ──────────────────────────────────────────────
 
     async def _cmd_ranking(self, message: discord.Message):
-        if not scores:
+        guild_id = int(message.guild.id)
+        guild_scores = [
+            (uid, score)
+            for (score_guild_id, uid), score in self.scores.items()
+            if score_guild_id == guild_id
+        ]
+        if not guild_scores:
             await message.channel.send("아직 점수가 없습니다.")
             return
-        top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:10]
+        top = sorted(guild_scores, key=lambda x: x[1], reverse=True)[:10]
         embed = discord.Embed(title="🏆 미니게임 랭킹 TOP 10", color=0xF59E0B)
         for i, (uid, score) in enumerate(top, 1):
             member = message.guild.get_member(uid)
-            name = member.display_name if member else score_names.get(uid, f"유저({uid})")
+            name = (
+                member.display_name if member
+                else self.score_names.get((guild_id, uid), f"유저({uid})")
+            )
             embed.add_field(name=f"{i}위 {name}", value=f"{score}점", inline=False)
         await message.channel.send(embed=embed)
 

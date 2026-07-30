@@ -3,12 +3,22 @@ import hashlib
 import hmac
 import json
 import sqlite3
+import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+
+if "gtts" not in sys.modules:
+    try:
+        __import__("gtts")
+    except ModuleNotFoundError:
+        gtts_stub = types.ModuleType("gtts")
+        gtts_stub.gTTS = object
+        sys.modules["gtts"] = gtts_stub
 
 from src import db as db_module
 from src.component_actions import (
@@ -79,9 +89,9 @@ class _ActionBoss:
 
 
 class _ActionBot:
-    def __init__(self, boss):
-        self.bot_number = 3
-        self.user = SimpleNamespace(id=999)
+    def __init__(self, boss, *, bot_number=3, user_id=999):
+        self.bot_number = bot_number
+        self.user = SimpleNamespace(id=user_id)
         self._boss = boss
 
     def get_cog(self, name):
@@ -147,6 +157,10 @@ class ComponentDispatcherTest(unittest.IsolatedAsyncioTestCase):
                 "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?, ?, ?)",
                 (100, 3, 200),
             )
+            await db.execute(
+                "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?, ?, ?)",
+                (100, 1, 201),
+            )
             await db.commit()
         self.boss = _ActionBoss()
         self.bot = _ActionBot(self.boss)
@@ -193,8 +207,9 @@ class ComponentDispatcherTest(unittest.IsolatedAsyncioTestCase):
 
         async with db_module.get_db() as db:
             row = await (await db.execute(
-                "SELECT status, attempt_count FROM component_action_claim WHERE idempotency_key=?",
-                ("boss-message:100:50",),
+                """SELECT status, attempt_count FROM component_action_claim
+                   WHERE bot_number=? AND guild_id=? AND message_id=?""",
+                (3, 100, 50),
             )).fetchone()
         self.assertEqual((row["status"], row["attempt_count"]), ("succeeded", 1))
 
@@ -241,8 +256,9 @@ class ComponentDispatcherTest(unittest.IsolatedAsyncioTestCase):
 
         async with db_module.get_db() as db:
             row = await (await db.execute(
-                "SELECT status, attempt_count FROM component_action_claim WHERE idempotency_key=?",
-                ("boss-message:100:50",),
+                """SELECT status, attempt_count FROM component_action_claim
+                   WHERE bot_number=? AND guild_id=? AND message_id=?""",
+                (3, 100, 50),
             )).fetchone()
         self.assertEqual((row["status"], row["attempt_count"]), ("succeeded", 2))
 
@@ -263,10 +279,46 @@ class ComponentDispatcherTest(unittest.IsolatedAsyncioTestCase):
 
         async with db_module.get_db() as db:
             row = await (await db.execute(
-                "SELECT status FROM component_action_claim WHERE idempotency_key=?",
-                ("boss-message:100:50",),
+                """SELECT status FROM component_action_claim
+                   WHERE bot_number=? AND guild_id=? AND message_id=?""",
+                (3, 100, 50),
             )).fetchone()
         self.assertEqual(row["status"], "succeeded")
+
+    async def test_same_component_identity_is_claimed_independently_by_each_bot(self):
+        message3 = self._message()
+        result3 = await self._dispatch(message=message3)
+
+        boss1 = _ActionBoss()
+        bot1 = _ActionBot(boss1, bot_number=1, user_id=111)
+        dispatcher1 = ComponentActionDispatcher(bot1)
+        message1 = self._message(channel_id=201, author_id=111)
+        result1 = await dispatcher1.dispatch(
+            request_id="request-bot1",
+            guild_id=100,
+            message_id=50,
+            custom_id=self.cut_id,
+            actor=self.actor,
+            actor_type="web_guest",
+            actor_ref="guest:session",
+            is_owner=False,
+            message=message1,
+        )
+
+        self.assertEqual(result3.status, "succeeded")
+        self.assertEqual(result1.status, "succeeded")
+        self.assertEqual(self.boss.calls, [("boss_cut", -42)])
+        self.assertEqual(boss1.calls, [("boss_cut", -42)])
+        async with db_module.get_db() as db:
+            rows = await (await db.execute(
+                """SELECT bot_number, status FROM component_action_claim
+                   WHERE guild_id=? AND message_id=? ORDER BY bot_number""",
+                (100, 50),
+            )).fetchall()
+        self.assertEqual(
+            [(row["bot_number"], row["status"]) for row in rows],
+            [(1, "succeeded"), (3, "succeeded")],
+        )
 
     async def test_legacy_unregistered_and_wrong_message_targets_are_rejected_without_claims(self):
         legacy = await self._dispatch(custom_id="boss_cut:100:체르투바")

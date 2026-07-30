@@ -30,9 +30,9 @@
 | 1분 전 | `n+2s  < scheduled_at ≤ n+90s`  | `warned_1min=0` |
 | 정각   | `scheduled_at ≤ n+2s`           | `notified=0` |
 
-뚠뚠봇 003의 설정된 텍스트 채널로 실제 전송된 5분·1분·정각 알림은
-bot-003 웹 bridge의 전체 발화 스트림에도 기록된다. 이 동기화는 보스
-스케줄러 전용 후킹이 아니라 003 자신의 Discord 발화 이벤트를 기준으로
+각 봇의 설정된 텍스트 채널로 실제 전송된 5분·1분·정각 알림은 해당 봇의
+웹 bridge 전체 발화 스트림에도 기록된다. 이 동기화는 보스 스케줄러 전용
+후킹이 아니라 각 봇 자신의 Discord 발화 이벤트를 기준으로
 하므로 임의 예약 알림과 다른 정상 봇 응답도 동일한 방식으로 웹에 전달된다.
 
 > 루프가 1초 간격이므로 정각 알림의 최대 오차는 **±2초** 이내.  
@@ -79,16 +79,11 @@ bot-003 웹 bridge의 전체 발화 스트림에도 기록된다. 이 동기화�
 `보탐`, `보탐+` 별칭도 동일하게 텍스트 전용이다. 이 규칙은 스케줄러의
 정각 알림에서 수행하는 자동 TTS와 별개다.
 
-### W7 003 선적용 검증 (2026-07-29)
+### W8 local verification boundary
 
-- 배포 커밋: `5a518fb`
-- 배포 전 DB 온라인 백업:
-  `/app/data/backups/bot_pre_w7_20260729-052657.db` (`integrity_check=ok`)
-- 배포 이미지에서 전체 테스트 46개 통과
-- `dodol-bot-003`만 재생성했고 001·002·004 컨테이너 ID와 시작 시각은
-  배포 전후 동일
-- 웹에서 `v 미입력 30회 테스트`를 실행해 성공 이벤트 한 건과
-  `[TTS] 재생 시작: 미입력 30회 테스트` 로그를 확인
+The multi-bot implementation and tests are complete locally. Production
+evidence is pending the owner-approved sequential order
+`004 → 001 → 002 → 003`; do not record local test output as production proof.
 
 ---
 

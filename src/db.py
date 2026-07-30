@@ -63,12 +63,12 @@ CREATE TABLE IF NOT EXISTS contributions (
     cut_at       TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
--- 003번 봇이 연결된 Discord 채널에 직접 발화한 내용을 웹 포털에
--- 안전하게 중계하기 위한 append-only 이벤트 로그다. 다른 봇도 같은 DB를
--- 초기화하지만, 실제 기록은 web_bridge가 003에서만 수행한다.
+-- 각 봇이 연결된 Discord 채널에 직접 발화한 내용을 웹 포털에
+-- 안전하게 중계하기 위한 append-only 이벤트 로그다.
 CREATE TABLE IF NOT EXISTS web_broadcast_event (
     cursor           INTEGER PRIMARY KEY AUTOINCREMENT,
     event_key        TEXT    NOT NULL UNIQUE,
+    bot_number       INTEGER NOT NULL DEFAULT 3,
     guild_id         INTEGER NOT NULL,
     channel_id       INTEGER NOT NULL,
     message_id       INTEGER NOT NULL,
@@ -91,6 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_web_broadcast_event_created_at
 CREATE TABLE IF NOT EXISTS component_action_claim (
     idempotency_key TEXT PRIMARY KEY,
     request_id      TEXT    NOT NULL,
+    bot_number      INTEGER NOT NULL DEFAULT 3,
     guild_id        INTEGER NOT NULL,
     channel_id      INTEGER NOT NULL,
     message_id      INTEGER NOT NULL,
@@ -213,11 +214,24 @@ async def init_db() -> None:
             "ALTER TABLE schedules ADD COLUMN warned_1min INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE contributions ADD COLUMN actor_type TEXT NOT NULL DEFAULT 'discord'",
             "ALTER TABLE contributions ADD COLUMN actor_ref TEXT",
+            "ALTER TABLE web_broadcast_event ADD COLUMN bot_number INTEGER NOT NULL DEFAULT 3",
+            "ALTER TABLE component_action_claim ADD COLUMN bot_number INTEGER NOT NULL DEFAULT 3",
         ]:
             try:
                 await db.execute(sql)
             except Exception:
                 pass
+        # These indexes must be created after the additive column migrations.
+        # Otherwise an existing pre-M44 table would fail CREATE_SQL before its
+        # missing bot_number column could be added.
+        await db.execute(
+            """CREATE INDEX IF NOT EXISTS idx_web_broadcast_event_bot_guild_cursor
+               ON web_broadcast_event (bot_number, guild_id, cursor)""",
+        )
+        await db.execute(
+            """CREATE INDEX IF NOT EXISTS idx_component_action_claim_bot_message
+               ON component_action_claim (bot_number, guild_id, message_id, updated_at)""",
+        )
         await db.commit()
 
     # 전체 길드 보스 데이터 마이그레이션
@@ -295,9 +309,21 @@ def _decode_broadcast_json(value: str | None, fallback: object) -> object:
         return fallback
 
 
+def _validate_bridge_bot_number(bot_number: int) -> int:
+    if type(bot_number) is not int or not 1 <= bot_number <= 4:
+        raise ValueError("bot_number must be 1-4")
+    return bot_number
+
+
+def _scoped_bridge_key(bot_number: int, key: str) -> str:
+    """Keep globally unique legacy key columns isolated without a table rebuild."""
+    return f"bot:{bot_number:03d}:{key}"
+
+
 async def append_web_broadcast_event(
     *,
     event_key: str,
+    bot_number: int = 3,
     guild_id: int,
     channel_id: int,
     message_id: int,
@@ -308,23 +334,43 @@ async def append_web_broadcast_event(
     components: list[dict],
     created_at: int | None = None,
 ) -> int:
-    """Persist one 003 broadcast event and return its stable cursor.
+    """Persist one bot-scoped broadcast event and return its stable cursor.
 
     ``event_key`` is derived from Discord's message identity/revision, so a
     duplicate gateway delivery returns the cursor already assigned to the
     original event rather than creating a second client-visible item.
     """
+    bot_number = _validate_bridge_bot_number(bot_number)
     if kind not in {"message", "message_update", "message_delete"}:
         raise ValueError("invalid broadcast event kind")
     created_at = int(created_at if created_at is not None else time.time() * 1000)
+    stored_event_key = _scoped_bridge_key(bot_number, event_key)
     async with get_db() as db:
+        # Bot 003 may already have pre-M44 unscoped rows. Treat them as the same
+        # event so a gateway replay during rollout cannot duplicate a broadcast.
+        lookup_keys = (
+            (stored_event_key, event_key) if bot_number == 3
+            else (stored_event_key,)
+        )
+        placeholders = ",".join("?" for _ in lookup_keys)
+        async with db.execute(
+            f"""SELECT cursor FROM web_broadcast_event
+                WHERE bot_number=? AND event_key IN ({placeholders})
+                ORDER BY event_key=? DESC LIMIT 1""",
+            (bot_number, *lookup_keys, stored_event_key),
+        ) as cur:
+            existing = await cur.fetchone()
+        if existing is not None:
+            return int(existing["cursor"])
+
         await db.execute(
             """INSERT OR IGNORE INTO web_broadcast_event
-               (event_key, guild_id, channel_id, message_id, kind, content,
+               (event_key, bot_number, guild_id, channel_id, message_id, kind, content,
                 embeds_json, attachments_json, components_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                event_key,
+                stored_event_key,
+                bot_number,
                 guild_id,
                 channel_id,
                 message_id,
@@ -337,7 +383,9 @@ async def append_web_broadcast_event(
             ),
         )
         async with db.execute(
-            "SELECT cursor FROM web_broadcast_event WHERE event_key=?", (event_key,),
+            """SELECT cursor FROM web_broadcast_event
+               WHERE bot_number=? AND event_key=?""",
+            (bot_number, stored_event_key),
         ) as cur:
             row = await cur.fetchone()
         if row is None:  # pragma: no cover - protects a corrupted concurrent DB only
@@ -349,20 +397,29 @@ async def append_web_broadcast_event(
         await db.execute("DELETE FROM web_broadcast_event WHERE created_at < ?", (cutoff,))
         await db.execute(
             """DELETE FROM web_broadcast_event
-               WHERE guild_id=? AND cursor NOT IN (
+               WHERE bot_number=? AND guild_id=? AND cursor NOT IN (
                  SELECT cursor FROM web_broadcast_event
-                 WHERE guild_id=? ORDER BY cursor DESC LIMIT ?
+                 WHERE bot_number=? AND guild_id=? ORDER BY cursor DESC LIMIT ?
                )""",
-            (guild_id, guild_id, WEB_BROADCAST_MAX_EVENTS_PER_GUILD),
+            (
+                bot_number, guild_id, bot_number, guild_id,
+                WEB_BROADCAST_MAX_EVENTS_PER_GUILD,
+            ),
         )
         await db.commit()
         return int(row["cursor"])
 
 
 async def list_web_broadcast_events(
-    *, guild_id: int, after: int = 0, limit: int = 100, channel_id: int | None = None,
+    *,
+    bot_number: int = 3,
+    guild_id: int,
+    after: int = 0,
+    limit: int = 100,
+    channel_id: int | None = None,
 ) -> tuple[list[dict], int]:
-    """Return a guild-scoped, cursor-ordered slice of the retained feed."""
+    """Return a bot-and-guild-scoped slice of the retained feed."""
+    bot_number = _validate_bridge_bot_number(bot_number)
     if after < 0:
         raise ValueError("after must not be negative")
     if not 1 <= limit <= WEB_BROADCAST_MAX_EVENTS_PER_GUILD:
@@ -371,8 +428,9 @@ async def list_web_broadcast_events(
     async with get_db() as db:
         # Reads enforce retention too, so a quiet guild cannot expose stale rows
         # that have not yet had a subsequent insert to trigger cleanup.
-        where = "guild_id=? AND created_at>=?"
+        where = "bot_number=? AND guild_id=? AND created_at>=?"
         base_params: tuple[int, ...] = (
+            bot_number,
             guild_id,
             int(time.time() * 1000) - WEB_BROADCAST_RETENTION_MS,
         )
@@ -397,6 +455,7 @@ async def list_web_broadcast_events(
             "cursor": int(row["cursor"]),
             "messageId": str(row["message_id"]),
             "kind": row["kind"],
+            "botNumber": int(row["bot_number"]),
             "guildId": str(row["guild_id"]),
             "channelId": str(row["channel_id"]),
             "content": row["content"],
@@ -412,16 +471,17 @@ async def list_web_broadcast_events(
 
 
 async def has_web_broadcast_message(
-    *, guild_id: int, channel_id: int, message_id: int,
+    *, bot_number: int = 3, guild_id: int, channel_id: int, message_id: int,
 ) -> bool:
     """Whether a prior mirrored message can safely receive a raw-delete tombstone."""
+    bot_number = _validate_bridge_bot_number(bot_number)
     async with get_db() as db:
         async with db.execute(
             """SELECT 1 FROM web_broadcast_event
-               WHERE guild_id=? AND channel_id=? AND message_id=?
+               WHERE bot_number=? AND guild_id=? AND channel_id=? AND message_id=?
                  AND kind IN ('message', 'message_update')
                LIMIT 1""",
-            (guild_id, channel_id, message_id),
+            (bot_number, guild_id, channel_id, message_id),
         ) as cur:
             return await cur.fetchone() is not None
 
@@ -430,6 +490,7 @@ async def claim_component_action(
     *,
     idempotency_key: str,
     request_id: str,
+    bot_number: int = 3,
     guild_id: int,
     channel_id: int,
     message_id: int,
@@ -445,24 +506,33 @@ async def claim_component_action(
     succeeded claim remains terminal; a failed claim is auditable and may be
     retried with a new request ID.
     """
+    bot_number = _validate_bridge_bot_number(bot_number)
     now_ms = int(time.time() * 1000)
+    stored_key = _scoped_bridge_key(bot_number, idempotency_key)
+    lookup_keys = (
+        (stored_key, idempotency_key) if bot_number == 3
+        else (stored_key,)
+    )
+    placeholders = ",".join("?" for _ in lookup_keys)
     async with get_db() as db:
         await db.execute("BEGIN IMMEDIATE")
         try:
             async with db.execute(
-                "SELECT status FROM component_action_claim WHERE idempotency_key=?",
-                (idempotency_key,),
+                f"""SELECT idempotency_key, status FROM component_action_claim
+                    WHERE bot_number=? AND idempotency_key IN ({placeholders})
+                    ORDER BY idempotency_key=? DESC LIMIT 1""",
+                (bot_number, *lookup_keys, stored_key),
             ) as cur:
                 row = await cur.fetchone()
             if row is None:
                 await db.execute(
                     """INSERT INTO component_action_claim
-                       (idempotency_key, request_id, guild_id, channel_id, message_id,
+                       (idempotency_key, request_id, bot_number, guild_id, channel_id, message_id,
                         custom_id, action_key, actor_type, actor_ref, status,
                         attempt_count, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', 1, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', 1, ?, ?)""",
                     (
-                        idempotency_key, request_id, guild_id, channel_id, message_id,
+                        stored_key, request_id, bot_number, guild_id, channel_id, message_id,
                         custom_id, action_key, actor_type, actor_ref, now_ms, now_ms,
                     ),
                 )
@@ -477,10 +547,10 @@ async def claim_component_action(
                        SET request_id=?, custom_id=?, action_key=?, actor_type=?, actor_ref=?,
                            status='processing', error_code=NULL, updated_at=?, completed_at=NULL,
                            attempt_count=attempt_count+1
-                       WHERE idempotency_key=?""",
+                       WHERE idempotency_key=? AND bot_number=?""",
                     (
                         request_id, custom_id, action_key, actor_type, actor_ref,
-                        now_ms, idempotency_key,
+                        now_ms, row["idempotency_key"], bot_number,
                     ),
                 )
                 state = "claimed"
@@ -494,29 +564,49 @@ async def claim_component_action(
 async def complete_component_action_claim(
     idempotency_key: str,
     *,
+    bot_number: int = 3,
     status: str,
     error_code: str | None = None,
 ) -> None:
     """Finalize a claim without storing exception text or sensitive input."""
     if status not in {"succeeded", "failed"}:
         raise ValueError("component action claim must finish succeeded or failed")
+    bot_number = _validate_bridge_bot_number(bot_number)
     now_ms = int(time.time() * 1000)
+    stored_key = _scoped_bridge_key(bot_number, idempotency_key)
+    lookup_keys = (
+        (stored_key, idempotency_key) if bot_number == 3
+        else (stored_key,)
+    )
+    placeholders = ",".join("?" for _ in lookup_keys)
     async with get_db() as db:
         await db.execute(
-            """UPDATE component_action_claim
+            f"""UPDATE component_action_claim
                SET status=?, error_code=?, updated_at=?, completed_at=?
-               WHERE idempotency_key=? AND status='processing'""",
-            (status, error_code, now_ms, now_ms, idempotency_key),
+               WHERE bot_number=? AND idempotency_key IN ({placeholders})
+                 AND status='processing'""",
+            (status, error_code, now_ms, now_ms, bot_number, *lookup_keys),
         )
         await db.commit()
 
 
-async def get_component_action_claim_status(idempotency_key: str) -> str | None:
+async def get_component_action_claim_status(
+    idempotency_key: str, *, bot_number: int = 3,
+) -> str | None:
     """Read a terminal claim for disabled-button reconciliation."""
+    bot_number = _validate_bridge_bot_number(bot_number)
+    stored_key = _scoped_bridge_key(bot_number, idempotency_key)
+    lookup_keys = (
+        (stored_key, idempotency_key) if bot_number == 3
+        else (stored_key,)
+    )
+    placeholders = ",".join("?" for _ in lookup_keys)
     async with get_db() as db:
         async with db.execute(
-            "SELECT status FROM component_action_claim WHERE idempotency_key=?",
-            (idempotency_key,),
+            f"""SELECT status FROM component_action_claim
+                WHERE bot_number=? AND idempotency_key IN ({placeholders})
+                ORDER BY idempotency_key=? DESC LIMIT 1""",
+            (bot_number, *lookup_keys, stored_key),
         ) as cur:
             row = await cur.fetchone()
     return str(row["status"]) if row is not None else None

@@ -8,7 +8,11 @@ services:
     restart: always
     env_file: .env
     environment:
-      - BOT_NUMBER=1
+      BOT_NUMBER: "1"
+      BOTAM_WEB_BRIDGE_ENABLED: "1"
+      BOTAM_BRIDGE_001_SECRET: ${BOTAM_BRIDGE_001_SECRET:-}
+      BOTAM_BRIDGE_001_SOCKET: /app/data/botam-001.sock
+      BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
     volumes:
       - ./data:/app/data
     logging:
@@ -22,7 +26,11 @@ services:
     restart: always
     env_file: .env
     environment:
-      - BOT_NUMBER=2
+      BOT_NUMBER: "2"
+      BOTAM_WEB_BRIDGE_ENABLED: "1"
+      BOTAM_BRIDGE_002_SECRET: ${BOTAM_BRIDGE_002_SECRET:-}
+      BOTAM_BRIDGE_002_SOCKET: /app/data/botam-002.sock
+      BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
     volumes:
       - ./data:/app/data
     logging:
@@ -38,10 +46,10 @@ services:
       - .env
       - botam-003-bridge.env
     environment:
-      - BOT_NUMBER=3
-      - BOTAM_WEB_BRIDGE_ENABLED=1
-      - BOTAM_BRIDGE_SOCKET=/app/data/botam-003.sock
-      - BOTAM_BRIDGE_GID=${DODOL_GID:-1000}
+      BOT_NUMBER: "3"
+      BOTAM_WEB_BRIDGE_ENABLED: "1"
+      BOTAM_BRIDGE_003_SOCKET: /app/data/botam-003.sock
+      BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
     volumes:
       - ./data:/app/data
     logging:
@@ -55,7 +63,11 @@ services:
     restart: always
     env_file: .env
     environment:
-      - BOT_NUMBER=4
+      BOT_NUMBER: "4"
+      BOTAM_WEB_BRIDGE_ENABLED: "1"
+      BOTAM_BRIDGE_004_SECRET: ${BOTAM_BRIDGE_004_SECRET:-}
+      BOTAM_BRIDGE_004_SOCKET: /app/data/botam-004.sock
+      BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
     volumes:
       - ./data:/app/data
     logging:

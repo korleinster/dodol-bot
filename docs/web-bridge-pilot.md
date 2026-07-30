@@ -1,191 +1,93 @@
-# Bot 003 Web Bridge Pilot
+# W8 Multi-Bot Web Bridge
 
 ## Scope
 
-The bridge is a bot-003-only adapter between leinsterCenter and the existing
-Discord command handlers. It uses `data/botam-003.sock`; no network listener is
-created. Bot 001, 002, and 004 do not receive bridge environment variables and
-must not create the socket.
+The W8 bridge is the authenticated adapter between leinsterCenter and the
+existing Discord command handlers for bots 001–004. Each process uses its own
+Unix socket (`data/botam-001.sock` through `data/botam-004.sock`) and no TCP
+listener. The guest profile determines the bot and guild; browser target
+fields are ignored.
 
-## Request authentication
+## Credentials and request authentication
 
-leinsterCenter signs the timestamp, nonce, HTTP method, path, and SHA-256 body
-digest with `BOTAM_BRIDGE_SECRET`. The bridge rejects invalid signatures,
-requests outside the 30-second window, reused nonces, bodies over 8 KiB, and
-invalid actors. The secret must be distinct from every web session or guest
-credential secret and must never be written to logs.
+Each bot receives a separately sourced `BOTAM_BRIDGE_00N_SECRET` and a
+numbered socket path. Secrets are at least 32 characters, distinct from every
+other bridge secret and from session/guest peppers, and are never logged. The
+legacy unnumbered 003 variables are temporary compatibility aliases only.
 
-The secret lives in the ignored `botam-003-bridge.env`, which is loaded only by
-the 003 Compose service. It must not be added to the shared `.env` used by every
-bot instance.
+Requests sign the timestamp, nonce, method, path, and SHA-256 body digest with
+the selected bot's HMAC secret. The bridge rejects invalid signatures, requests
+outside the 30-second window, reused nonces, invalid actors, and bodies over
+8 KiB. Sockets are mode `0660` with the configured host group.
 
-## Guest command boundary
+## Botam and capability policy
 
-Allowed behavior includes Botam records, immediate reset, TTS, utilities, and
-mini-games. `재시작`, `정신차려`, summon, settings, and other process or channel
-operations are rejected before any command handler runs.
+Every active access profile has its own 8–64 character password. leinsterCenter
+stores only a scrypt hash and salt, and derives the bot/guild target from the
+authenticated profile. Guests may use Botam records, reset, utilities, games,
+and registered component actions; process restart, summon/settings, logs,
+deployment, and container control remain owner-only at both layers.
 
-Web users receive stable negative actor IDs and display as `웹 · nickname`.
-Contributions retain the legacy `user_id` field while recording additive
-`actor_type` and `actor_ref` values.
+Targets report `commands`, `components`, and `games` only when a text channel is
+configured. `tts` is true only when a voice channel is configured and the
+pinned voice runtime is healthy. Manual TTS accepts only `v <text>` and
+`ㅍ <text>`, with a 200-character limit and at most three queued web jobs per
+bridge. `Z`, `Z+`, and lowercase reservation aliases are text/list-only and do
+not call the TTS cog. Scheduled exact-time alerts retain their automatic TTS
+path independently.
 
-## W6 TTS routing
+## Shared component actions
 
-The Revision 2 pilot keeps manual voice output narrowly scoped. Only a command
-whose leading token is `v` or `ㅍ` (followed by text) enters the TTS queue. `Z`
-and `Z+` are text/list-only reservation commands; they do not call the TTS cog,
-increment queue state, or consume a pending-job slot. Lowercase reservation
-aliases follow the same text-only rule. Scheduled exact-time boss alerts still
-perform their existing automatic Discord notification and TTS in the scheduler
-path.
+The bridge exposes `/internal/v1/component-actions` for registered buttons.
+Every registration declares its matcher, handler, `style`, `disabled`,
+`actionable`, and mandatory boolean `allowNonAdmin`. Guest/ordinary Discord
+actors require `allowNonAdmin=true`; owner web and Discord administrators may
+use restricted controls. Unknown, policy-less, disabled, stale, or
+wrong-channel components fail closed. Claims are idempotent and outcomes never
+contain passwords, cookies, signatures, HMAC material, or tracebacks.
 
-The voice-enabled runtime is pinned to `discord.py[voice]==2.7.1`. The image
-must also contain the `davey` DAVE dependency, PyNaCl, and FFmpeg. Verify these
-inside the actual image with `python -m discord --version` and imports of
-`discord`, `davey`, and `nacl`; see [`tts-dave-pilot.md`](tts-dave-pilot.md) for
-the complete local/container checks.
+## Bot-authored feed and scheduler health
 
-## Shared component-action contract (M42)
+Each bot mirrors only its own bot-authored messages in its configured guild and
+text channel. Human messages, other bots, DMs, and other channels are excluded.
+Create/edit/delete events use the additive cursor feed, bounded to 24 hours and
+500 events per guild; query parameters are included in the HMAC path.
 
-The bridge exposes the bot-003-only `POST /internal/v1/component-actions`
-endpoint for buttons mirrored in the web feed. Discord interactions and signed
-web requests enter the same dispatcher. A registry entry is required for every
-executable button and must declare:
+`/internal/v1/targets` reports safe scheduler states: `starting`, `ready`, or
+`failed` with bounded error codes and no traces. Startup is `login → load cogs →
+start bridge → connect`; bridge failure is fail-open for Discord core behavior.
+Recovery is bot-number scoped, quiet for overdue rows, exact-now preserving,
+and idempotent.
 
-- the `custom_id` matcher and handler;
-- `style`, `disabled`, and `actionable=true`; and
-- the mandatory boolean `allowNonAdmin`.
+## Secure image and build context
 
-`allowNonAdmin=true` allows an authenticated web guest or an ordinary Discord
-member. `allowNonAdmin=false` allows only the owner web surface or a Discord
-guild administrator. The bridge derives the actor and configured guild/channel
-from trusted context and ignores browser-supplied permission fields.
-
-An unknown button, a missing policy boolean, a disabled component, a message
-outside the configured bot-authored channel, or a stale component fails closed.
-Pre-M42 messages remain read-only history; they are not retrofitted with an
-action policy. Guest broadcast payloads omit explicitly restricted controls,
-while owner payloads retain registered controls for audit.
-
-Before invoking a handler, the bridge verifies the original Discord message,
-bot identity, configured guild and text channel, exact custom ID, and current
-component state. Cut and miss on the same boss alert use one message-level
-claim so a race cannot settle twice. Other buttons default to a
-`message_id + custom_id` claim. Duplicate requests return the stored outcome.
-The action record contains bounded status/reason data only; it never contains
-passwords, cookies, HMAC material, signatures, or tracebacks.
-
-On success, the original Discord components and the web event converge to the
-disabled result. On handler failure, bridge timeout, or Discord edit failure,
-the result is explicit and includes safe retry guidance; the client must not
-infer success from a timeout.
-
-## Shared game behavior
-
-- Dice, coin, and number games use the same in-process handlers as Discord.
-- Race edits are captured as ordered job events while the Discord message is
-  edited normally.
-- Web-started lotteries create the normal Discord reaction message. Discord
-  users may join with the existing reaction. The initiating web actor may draw
-  through an idempotent bridge request.
-- Ranking names prefer the stored web display name when no Discord member
-  exists for a negative actor ID.
-
-## Bot-authored channel feed
-
-When the bridge starts on bot 003 it registers Discord message, edit, delete,
-and raw-delete listeners. A message is mirrored only when all of these are true:
-
-- the author is the running bot-003 Discord identity;
-- the guild exists in `guild_config` for bot 003;
-- the message channel is that row's configured `text_channel_id`.
-
-The feed therefore includes scheduler alerts, arbitrary reservation notices,
-Discord- and web-originated command replies, utilities, mini-games, errors, and
-bot lifecycle notices. It excludes human messages, other bots, DMs, and other
-channels. Raw deletes create a tombstone only when the message was previously
-mirrored, so an uncached delete cannot reveal or remove an unrelated message.
-
-`web_broadcast_event` is an additive, append-only cursor log. Duplicate gateway
-deliveries share an event key. Retention is limited to 24 hours and the latest
-500 events per guild. `GET /internal/v1/broadcast-events` is HMAC authenticated,
-binds its query string into the signature, filters by the current configured
-channel, and returns at most 100 events in ascending cursor order.
-
-## Scheduler health and startup recovery
-
-`GET /internal/v1/targets` includes a strict, safe scheduler object:
-
-- `starting`: recovery or the first real tick is pending;
-- `ready`: bootstrap and latest successful tick timestamps are present;
-- `failed`: a bounded uppercase error code is present.
-
-The bridge normalizes impossible internal combinations to
-`SCHEDULER_STATUS_UNKNOWN` and never returns exception text or a traceback.
-Repeated scheduler incidents are rate limited, and a later successful tick
-closes the incident so a new outage can be reported once.
-
-The bot logs in before scheduler cogs are loaded. The optional bridge then
-starts before the Discord gateway connects so it can observe lifecycle
-messages. Bridge startup failure is fail-open for Discord core behavior; fatal
-Discord login or connection failure is not swallowed in single-bot mode.
-
-At scheduler bootstrap, overdue rows for the running bot number are marked
-complete without sending Discord or TTS output. Normal and fixed bosses receive
-one safe future pending row where their configuration permits it. Exact-now
-rows are preserved, arbitrary reservations are not regenerated, duplicate
-future rows are removed, and rerunning recovery is idempotent.
-
-## Deployment boundary
-
-Building the shared image does not authorize recreating every service. After
-separate approval, recreate only bot 003:
-
-```bash
-docker compose up -d --no-deps dodol-bot-003
-```
-
-Record the container IDs and start times for 001, 002, and 004 before and after
-the pilot deployment; they must remain unchanged.
+The Dockerfile uses a pinned Python virtualenv in a multi-stage build. The
+root runtime is retained for shared DB/socket permission compatibility.
+`.dockerignore` denies the context by default and
+allows only the runtime sources and dependency manifest. Environment files,
+secrets, databases, logs, backups, VCS metadata, caches, and build output stay
+outside the image. Inspect the built image and context without starting a bot;
+never inject production secrets into a build argument or image layer.
 
 ## Verification
 
-1. Run unit tests and Python compilation.
-2. Validate the Compose model and confirm bridge variables appear only on 003.
-3. Confirm the socket owner group and `0660` mode.
-4. Submit identical reset requests with the same idempotency key and verify one
-   execution.
-5. Run `v <text>` and `ㅍ <text>` from web and confirm one TTS job per command;
-   run `Z` and `Z+` and confirm the text/list response leaves the TTS queue
-   unchanged. Then run dice, number game, race, and lottery and confirm
-   Discord output and web events agree.
-6. Trigger bot speech from Discord, a scheduler, and a web command; confirm one
-   web card per Discord message and confirm edits/deletes converge.
-7. Verify human, other-bot, DM, and other-channel messages are not mirrored.
-8. Verify process commands are rejected.
-9. Stop only the 003 bridge/container and confirm the other bots continue.
-10. Confirm scheduler health reaches `ready`, the latest tick advances, overdue
-    bot-003 rows are zero, and each configured boss has at most one future
-    pending row.
-11. Register a button with `allowNonAdmin=true` and verify Discord member,
-    guest-web, and owner-web calls share one handler and one claim.
-12. Register a button with `allowNonAdmin=false` and verify the guest feed omits
-    it, a forged guest request is rejected, a guild administrator is accepted,
-    and an owner request is accepted.
-13. Verify missing-policy, unknown-custom-ID, disabled, stale-message, and
-    wrong-channel requests fail closed; verify pre-M42 messages remain inert.
-14. Race Discord and web cut/miss requests and resend the same request ID;
-    verify one underlying state change, converged disabled components, and a
-    bounded duplicate result.
-15. Force a bridge timeout and a Discord edit failure; verify no success is
-    inferred and the response includes a safe retry path.
+1. Run unit tests, Python compilation, `docker compose config --quiet`, and
+   inspect the image for the expected pinned voice dependencies.
+2. Confirm each service has only its own numbered bridge variables and socket.
+3. Verify profile login routes to the profile's bot/guild even when the request
+   submits forged target fields.
+4. Verify text-channel capability gating, voice-runtime/TTS gating, the 200
+   character limit, three-job queue limit, and `Z`/`Z+` text-only behavior.
+5. Verify component policy, feed filtering, HMAC query binding, cursor
+   isolation, scheduler health, and idempotent retries.
+6. With owner approval recorded, roll out sequentially `004 → 001 → 002 →
+   003`, recording health, socket mode/group, capability, and safe probe
+   evidence at every gate. If a gate fails, roll back only that bot and stop;
+   later bots remain untouched pending a new decision.
 
-## Recovery
+## Deployment boundary
 
-Bridge and command failures are explicit; clients must not assume success. For
-capacity, authentication, or timeout failures, inspect bot-003 health and retry
-only through a new owner-approved operational action. Preserve the shared DB and
-socket directory. The W6 rollback may recreate only `dodol-bot-003` from the
-known-good image tag; never delete the database or restart/recreate 001, 002, or
-004 as an automatic recovery step. See [`tts-dave-pilot.md`](tts-dave-pilot.md)
-for the exact rollback commands.
+Local implementation and the sequential rollout are owner-approved; production
+evidence is pending. Do not open a new port or change Tailscale. See the leinsterCenter
+[`M44-DEPLOYMENT.md`](../../leinsterCenter/ops/M44-DEPLOYMENT.md) runbook for
+the owner-approval gates and evidence record.

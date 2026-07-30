@@ -202,6 +202,10 @@ class TTS(commands.Cog):
     async def speak(self, guild: discord.Guild, text: str, *, wait_until_complete: bool = False) -> bool:
         if not self._voice_runtime_ready():
             return False
+        # Fail before generating a file or touching the network when this exact
+        # bot+guild target has no configured voice channel.
+        if not await self.get_voice_channel(guild.id):
+            return False
 
         # 1. TTS 파일 먼저 생성
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:

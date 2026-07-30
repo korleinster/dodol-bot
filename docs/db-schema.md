@@ -1,7 +1,8 @@
 # DB 스키마 명세
 
 SQLite 단일 파일 (`bot.db`). 기존 스케줄/보스/기여 테이블은 유지하며,
-M42는 버튼 실행 claim/audit를 additive 방식으로 확장한다.
+M44/W8 keeps the existing tables and additively scopes bridge events, command
+audits, and component claims to bot numbers 001–004.
 
 ---
 
@@ -108,7 +109,7 @@ INSERT (notified=0, warned_5min=0, warned_1min=0)
 
 ---
 
-## M42 component action claims (additive)
+## M44 component action claims (additive)
 
 The component-action dispatcher uses a separate idempotency record so a web
 retry or a Discord double-click cannot repeat a state change. Exact column names
@@ -132,6 +133,12 @@ Button registration metadata is not inferred from this SQLite history. The
 running dispatcher remains the source of truth for `custom_id`, handler,
 `style`, `disabled`, `actionable`, and mandatory `allowNonAdmin`; an unknown or
 policy-less component is inert.
+
+Botam access profiles are the credential boundary. Each profile stores one
+`bot_number` (1–4), one guild, and a scrypt password hash/salt. Passwords are
+bot-specific and are never stored in bridge or component records. Bridge event,
+command, and component rows include bot scope so a guest authenticated for one
+profile cannot read or mutate another bot's state.
 
 ---
 

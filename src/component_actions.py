@@ -202,12 +202,13 @@ class ComponentActionDispatcher:
     async def fetch_original_message(
         self, *, guild_id: int, message_id: int,
     ) -> tuple[Any | None, ComponentActionResult | None]:
-        """Fetch only the configured 003 channel's original bot message."""
+        """Fetch only this bot's configured channel and original message."""
+        bot_label = f"{int(self.bot.bot_number):03d}"
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return None, self._failure(
                 "GUILD_UNAVAILABLE", "연결된 Discord 서버를 찾을 수 없습니다.",
-                "003번 봇 연결 상태를 확인한 뒤 다시 시도하세요.",
+                f"{bot_label}번 봇 연결 상태를 확인한 뒤 다시 시도하세요.",
             )
         async with get_db() as db:
             async with db.execute(
@@ -218,14 +219,14 @@ class ComponentActionDispatcher:
         if row is None or not row["text_channel_id"]:
             return None, self._failure(
                 "CHANNEL_UNAVAILABLE", "연결된 Discord 채널을 찾을 수 없습니다.",
-                "003번 봇 채널 설정을 확인한 뒤 다시 시도하세요.",
+                f"{bot_label}번 봇 채널 설정을 확인한 뒤 다시 시도하세요.",
             )
         channel = self.bot.get_channel(int(row["text_channel_id"]))
         fetch_message = getattr(channel, "fetch_message", None)
         if channel is None or fetch_message is None:
             return None, self._failure(
                 "CHANNEL_UNAVAILABLE", "연결된 Discord 채널을 사용할 수 없습니다.",
-                "003번 봇 연결 상태를 확인한 뒤 다시 시도하세요.",
+                f"{bot_label}번 봇 연결 상태를 확인한 뒤 다시 시도하세요.",
             )
         try:
             return await fetch_message(message_id), None
@@ -343,7 +344,10 @@ class ComponentActionDispatcher:
             return validation
         component = self._find_component(message, custom_id)
         if bool(getattr(component, "disabled", False)):
-            prior_status = await get_component_action_claim_status(action.idempotency_key)
+            prior_status = await get_component_action_claim_status(
+                action.idempotency_key,
+                bot_number=self.bot.bot_number,
+            )
             if prior_status == "succeeded":
                 canonical_message = await self._disable_after_success(message, action)
                 return ComponentActionResult(
@@ -360,6 +364,7 @@ class ComponentActionDispatcher:
         claim_state = await claim_component_action(
             idempotency_key=action.idempotency_key,
             request_id=request_id,
+            bot_number=self.bot.bot_number,
             guild_id=guild_id,
             channel_id=int(message.channel.id),
             message_id=message_id,
@@ -386,18 +391,24 @@ class ComponentActionDispatcher:
         handler = getattr(cog, action.handler_name, None) if cog is not None else None
         if handler is None:
             await complete_component_action_claim(
-                action.idempotency_key, status="failed", error_code="ACTION_HANDLER_UNAVAILABLE",
+                action.idempotency_key,
+                bot_number=self.bot.bot_number,
+                status="failed",
+                error_code="ACTION_HANDLER_UNAVAILABLE",
             )
             return self._failure(
                 "ACTION_HANDLER_UNAVAILABLE", "버튼 처리 기능을 사용할 수 없습니다.",
-                "003번 봇 상태를 확인한 뒤 다시 시도하세요.",
+                f"{int(self.bot.bot_number):03d}번 봇 상태를 확인한 뒤 다시 시도하세요.",
             )
         try:
             output = await handler(action=action, message=message, actor=actor)
         except Exception as exc:
             print(f"[component-actions] action handler failed ({type(exc).__name__})")
             await complete_component_action_claim(
-                action.idempotency_key, status="failed", error_code="ACTION_FAILED",
+                action.idempotency_key,
+                bot_number=self.bot.bot_number,
+                status="failed",
+                error_code="ACTION_FAILED",
             )
             return self._failure(
                 "ACTION_FAILED", "버튼 처리에 실패했습니다.",
@@ -407,14 +418,21 @@ class ComponentActionDispatcher:
             # Business validation failures are retryable. The message remains
             # actionable and the audit row records a safe reason only.
             await complete_component_action_claim(
-                action.idempotency_key, status="failed", error_code="ACTION_REJECTED",
+                action.idempotency_key,
+                bot_number=self.bot.bot_number,
+                status="failed",
+                error_code="ACTION_REJECTED",
             )
             return self._failure(
                 "ACTION_REJECTED", output,
                 "알림 대상과 보스 상태를 확인한 뒤 다시 시도하세요.",
             )
 
-        await complete_component_action_claim(action.idempotency_key, status="succeeded")
+        await complete_component_action_claim(
+            action.idempotency_key,
+            bot_number=self.bot.bot_number,
+            status="succeeded",
+        )
         # Discord and web requests share one public result delivery. The
         # business mutation is already terminal in the durable claim, so a
         # delivery outage can never reopen it or permit a duplicate cut/miss.
@@ -472,7 +490,7 @@ class ComponentActionDispatcher:
         if int(getattr(author, "id", 0)) != int(getattr(bot_user, "id", -1)):
             return self._failure(
                 "MESSAGE_NOT_BOT_AUTHORED", "봇이 작성한 메시지만 실행할 수 있습니다.",
-                "003번 봇 알림에서 다시 시도하세요.",
+                f"{int(self.bot.bot_number):03d}번 봇 알림에서 다시 시도하세요.",
             )
         component = self._find_component(message, custom_id)
         if component is None:

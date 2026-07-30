@@ -30,6 +30,10 @@
 | 정각 알림 TTS | 동일하게 무응답 (TTS 없이 텍스트 알림만 발송) |
 | 음성 채널이 삭제된 경우 | `guild.get_channel(vc_id)` → None → `speak()` return (무응답) |
 
+For W8 web targets, the same condition is explicit: `tts` is reported as
+false and a web TTS request fails closed before creating a job. Commands,
+components, and games remain available when the text channel is configured.
+
 ---
 
 ## TTS 연결 실패

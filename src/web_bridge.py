@@ -1,8 +1,9 @@
-"""Authenticated Unix-socket bridge for the botam web pilot on bot 003."""
+"""Authenticated, per-bot Unix-socket bridge for botam bots 001-004."""
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import hashlib
 import hmac
 import json
@@ -27,6 +28,7 @@ from src.db import (
 
 
 BRIDGE_VERSION = 1
+BRIDGE_BOT_NUMBERS = frozenset(range(1, 5))
 MAX_BODY_BYTES = 8 * 1024
 MAX_TTS_CHARS = 200
 MAX_TTS_QUEUE = 3
@@ -193,6 +195,7 @@ class BridgeJob:
     id: str
     actor_ref: str
     command: str
+    guild_id: int
     status: str = "queued"
     events: list[dict[str, Any]] = field(default_factory=list)
     error_code: str | None = None
@@ -307,7 +310,7 @@ class WebBridge:
         self.component_dispatcher = ComponentActionDispatcher(bot)
         self._broadcast_listeners_registered = False
         # Keep the exact bound-method instances so discord.py can reliably
-        # unregister them when 003 shuts down or reconnects during a deploy.
+        # unregister them when this bot shuts down or reconnects during a deploy.
         self._broadcast_message_listener = self._on_broadcast_message
         self._broadcast_edit_listener = self._on_broadcast_message_edit
         self._broadcast_delete_listener = self._on_broadcast_message_delete
@@ -377,18 +380,25 @@ class WebBridge:
         targets = []
         for guild_id, text_id, voice_id in rows:
             guild = self.bot.get_guild(guild_id)
+            has_text_channel = bool(text_id)
             targets.append({
                 "guildId": str(guild_id),
                 "guildName": guild.name if guild else f"Discord {guild_id}",
                 "botNumber": self.bot.bot_number,
                 "textChannelId": str(text_id),
                 "voiceChannelId": str(voice_id) if voice_id else None,
+                "capabilities": {
+                    "commands": has_text_channel,
+                    "components": has_text_channel,
+                    "games": has_text_channel,
+                    "tts": bool(voice_id),
+                },
                 "scheduler": _scheduler_health_payload(self.bot),
             })
         return web.json_response({"targets": targets})
 
     async def broadcast_events(self, request: web.Request) -> web.Response:
-        """Return the retained 003-only bot-message feed for one guild."""
+        """Return this bridge bot's retained message feed for one guild."""
         await self._authenticate(request)
         guild_id_raw = request.query.get("guildId", "")
         after_raw = request.query.get("after", "0")
@@ -406,24 +416,28 @@ class WebBridge:
             return web.json_response({"events": [], "nextCursor": after})
         try:
             events, next_cursor = await list_web_broadcast_events(
-                guild_id=guild_id, channel_id=channel_id, after=after, limit=limit,
+                bot_number=self.bot.bot_number,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                after=after,
+                limit=limit,
             )
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc)) from exc
         return web.json_response({"events": events, "nextCursor": next_cursor})
 
     async def _configured_broadcast_channel(self, guild_id: int) -> int | None:
-        """Resolve the only Discord channel whose bot speech may be mirrored."""
+        """Resolve this bot's configured Discord channel for one guild."""
         async with get_db() as db:
             async with db.execute(
                 "SELECT text_channel_id FROM guild_config WHERE guild_id=? AND bot_number=?",
-                (guild_id, 3),
+                (guild_id, self.bot.bot_number),
             ) as cur:
                 row = await cur.fetchone()
         return int(row["text_channel_id"]) if row and row["text_channel_id"] else None
 
     async def _is_broadcast_message(self, message: discord.Message) -> bool:
-        if getattr(self.bot, "bot_number", None) != 3:
+        if getattr(self.bot, "bot_number", None) not in BRIDGE_BOT_NUMBERS:
             return False
         guild = getattr(message, "guild", None)
         author = getattr(message, "author", None)
@@ -445,6 +459,7 @@ class WebBridge:
         if kind == "message_delete":
             await append_web_broadcast_event(
                 event_key=_event_key(message_id=message_id, kind=kind),
+                bot_number=self.bot.bot_number,
                 guild_id=guild_id,
                 channel_id=channel_id,
                 message_id=message_id,
@@ -470,6 +485,7 @@ class WebBridge:
                 components=components,
                 edited_at=getattr(message, "edited_at", None),
             ),
+            bot_number=self.bot.bot_number,
             guild_id=guild_id,
             channel_id=channel_id,
             message_id=message_id,
@@ -503,11 +519,11 @@ class WebBridge:
         """Mirror deletes even after Discord evicts the message from its cache.
 
         Raw delete events do not include an author. We only emit a tombstone for
-        a message that this 003 bridge had already mirrored from its configured
+        a message that this bot bridge had already mirrored from its configured
         channel, which keeps human and other-bot deletes out of the web feed.
         """
         try:
-            if getattr(self.bot, "bot_number", None) != 3:
+            if getattr(self.bot, "bot_number", None) not in BRIDGE_BOT_NUMBERS:
                 return
             guild_id = getattr(payload, "guild_id", None)
             channel_id = getattr(payload, "channel_id", None)
@@ -519,11 +535,15 @@ class WebBridge:
             if configured_channel != channel_id:
                 return
             if not await has_web_broadcast_message(
-                guild_id=guild_id, channel_id=channel_id, message_id=message_id,
+                bot_number=self.bot.bot_number,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                message_id=message_id,
             ):
                 return
             await append_web_broadcast_event(
                 event_key=_event_key(message_id=message_id, kind="message_delete"),
+                bot_number=self.bot.bot_number,
                 guild_id=guild_id,
                 channel_id=channel_id,
                 message_id=message_id,
@@ -537,7 +557,10 @@ class WebBridge:
             print(f"[web-bridge] raw broadcast delete capture failed ({type(exc).__name__})")
 
     def _register_broadcast_listeners(self) -> None:
-        if self._broadcast_listeners_registered or getattr(self.bot, "bot_number", None) != 3:
+        if (
+            self._broadcast_listeners_registered
+            or getattr(self.bot, "bot_number", None) not in BRIDGE_BOT_NUMBERS
+        ):
             return
         self.bot.add_listener(self._broadcast_message_listener, "on_message")
         self.bot.add_listener(self._broadcast_edit_listener, "on_message_edit")
@@ -570,6 +593,35 @@ class WebBridge:
             if text is None or len(text) > MAX_TTS_CHARS:
                 raise web.HTTPBadRequest(text=f"TTS text must be 1-{MAX_TTS_CHARS} characters")
 
+    async def _configured_channels(self, guild_id: int) -> tuple[int | None, int | None]:
+        """Resolve only this bot+guild target from the shared configuration DB."""
+        async with get_db() as db:
+            async with db.execute(
+                """SELECT text_channel_id, voice_channel_id
+                   FROM guild_config WHERE guild_id=? AND bot_number=?""",
+                (guild_id, self.bot.bot_number),
+            ) as cur:
+                row = await cur.fetchone()
+        if row is None:
+            return None, None
+        text_id = int(row["text_channel_id"]) if row["text_channel_id"] else None
+        voice_id = int(row["voice_channel_id"]) if row["voice_channel_id"] else None
+        return text_id, voice_id
+
+    def _raise_tts_unavailable(self) -> None:
+        bot_label = f"{int(self.bot.bot_number):03d}"
+        payload = {
+            "errorCode": "TTS_UNAVAILABLE",
+            "errorMessage": f"{bot_label}번 봇에 음성 채널이 설정되지 않아 TTS를 사용할 수 없습니다.",
+            "recoveryInstructions": (
+                f"Discord에서 {bot_label}번 봇의 음성 채널을 설정한 뒤 새 요청으로 다시 시도하세요."
+            ),
+        }
+        raise web.HTTPConflict(
+            text=json.dumps(payload, ensure_ascii=False),
+            content_type="application/json",
+        )
+
     async def create_command(self, request: web.Request) -> web.Response:
         data = await self._json(request)
         request_id = str(data.get("requestId", ""))
@@ -586,16 +638,29 @@ class WebBridge:
         except ValueError as exc:
             raise web.HTTPBadRequest(text="invalid guildId") from exc
         self._validate_command(command)
+        is_tts = _is_tts_command(command)
+        if is_tts:
+            _text_channel_id, voice_channel_id = await self._configured_channels(guild_id)
+            if voice_channel_id is None:
+                self._raise_tts_unavailable()
         existing = self.jobs.get(request_id)
         if existing:
-            if existing.actor_ref != actor_ref or existing.command != command:
+            if (
+                existing.actor_ref != actor_ref
+                or existing.command != command
+                or existing.guild_id != guild_id
+            ):
                 raise web.HTTPConflict(text="idempotency key conflict")
             return web.json_response(existing.payload())
 
-        is_tts = _is_tts_command(command)
         if is_tts and self.tts_pending >= MAX_TTS_QUEUE:
             raise web.HTTPTooManyRequests(text="TTS queue is full")
-        job = BridgeJob(id=request_id, actor_ref=actor_ref, command=command)
+        job = BridgeJob(
+            id=request_id,
+            actor_ref=actor_ref,
+            command=command,
+            guild_id=guild_id,
+        )
         self.jobs[request_id] = job
         if is_tts:
             self.tts_pending += 1
@@ -715,8 +780,13 @@ class WebBridge:
             print(f"[web-bridge] command failed ({type(exc).__name__})")
             job.status = "failed"
             job.error_code = "COMMAND_FAILED"
-            job.error_message = "명령 실행에 실패했습니다. 003 봇 상태를 확인한 뒤 새 요청으로 다시 시도하세요."
-            job.recovery_instructions = "003 봇 연결 상태를 확인한 뒤 같은 명령을 새 요청으로 다시 실행하세요."
+            bot_label = f"{int(self.bot.bot_number):03d}"
+            job.error_message = (
+                f"명령 실행에 실패했습니다. {bot_label}번 봇 상태를 확인한 뒤 새 요청으로 다시 시도하세요."
+            )
+            job.recovery_instructions = (
+                f"{bot_label}번 봇 연결 상태를 확인한 뒤 같은 명령을 새 요청으로 다시 실행하세요."
+            )
         finally:
             if is_tts:
                 self.tts_pending = max(0, self.tts_pending - 1)
@@ -737,10 +807,19 @@ class WebBridge:
         command = f"lottery:{message_id}"
         existing = self.jobs.get(request_id)
         if existing:
-            if existing.actor_ref != actor_ref or existing.command != command:
+            if (
+                existing.actor_ref != actor_ref
+                or existing.command != command
+                or existing.guild_id != guild_id
+            ):
                 raise web.HTTPConflict(text="idempotency key conflict")
             return web.json_response(existing.payload())
-        job = BridgeJob(id=request_id, actor_ref=actor_ref, command=command)
+        job = BridgeJob(
+            id=request_id,
+            actor_ref=actor_ref,
+            command=command,
+            guild_id=guild_id,
+        )
         self.jobs[request_id] = job
         job.status = "running"
         try:
@@ -758,7 +837,12 @@ class WebBridge:
             if channel is None:
                 raise RuntimeError("Discord channel unavailable")
             capture = CaptureChannel(channel, job)
-            result = await cog.finish_lottery(message_id, actor_ref, capture)
+            result = await cog.finish_lottery(
+                message_id,
+                actor_ref,
+                capture,
+                guild_id=guild_id,
+            )
             if isinstance(result, str):
                 job.status = "failed"
                 job.error_code = "LOTTERY_REJECTED"
@@ -770,8 +854,13 @@ class WebBridge:
             print(f"[web-bridge] lottery failed ({type(exc).__name__})")
             job.status = "failed"
             job.error_code = "LOTTERY_FAILED"
-            job.error_message = "추첨에 실패했습니다. 003 봇 상태를 확인한 뒤 새 요청으로 다시 시도하세요."
-            job.recovery_instructions = "진행 중인 뽑기와 003 봇 상태를 확인한 뒤 새 요청으로 다시 실행하세요."
+            bot_label = f"{int(self.bot.bot_number):03d}"
+            job.error_message = (
+                f"추첨에 실패했습니다. {bot_label}번 봇 상태를 확인한 뒤 새 요청으로 다시 시도하세요."
+            )
+            job.recovery_instructions = (
+                f"진행 중인 뽑기와 {bot_label}번 봇 상태를 확인한 뒤 새 요청으로 다시 실행하세요."
+            )
         finally:
             job.updated_at = _now_ms()
         return web.json_response(job.payload())
@@ -796,7 +885,10 @@ class WebBridge:
             os.chown(self.socket_path, -1, int(bridge_gid))
         os.chmod(self.socket_path, 0o660)
         self._register_broadcast_listeners()
-        print(f"[web-bridge] bot 003 Unix socket ready: {self.socket_path}")
+        print(
+            f"[web-bridge] bot {int(self.bot.bot_number):03d} "
+            f"Unix socket ready: {self.socket_path}"
+        )
 
     async def close(self) -> None:
         self._remove_broadcast_listeners()
@@ -808,12 +900,33 @@ class WebBridge:
 
 async def start_web_bridge(bot) -> WebBridge | None:
     enabled = os.getenv("BOTAM_WEB_BRIDGE_ENABLED", "").lower() in {"1", "true", "yes"}
-    if not enabled or bot.bot_number != 3:
+    bot_number = getattr(bot, "bot_number", None)
+    if (
+        not enabled
+        or type(bot_number) is not int
+        or bot_number not in BRIDGE_BOT_NUMBERS
+    ):
         return None
-    secret = os.getenv("BOTAM_BRIDGE_SECRET", "")
+    bot_label = f"{int(bot_number):03d}"
+    prefix = f"BOTAM_BRIDGE_{bot_label}"
+    secret = os.getenv(f"{prefix}_SECRET", "")
+    socket_raw = os.getenv(f"{prefix}_SOCKET", "")
+    if bot_number == 3:
+        # Temporary M38 compatibility only. Other bots must never consume the
+        # unnumbered bot-003 credential or socket by accident.
+        secret = secret or os.getenv("BOTAM_BRIDGE_SECRET", "")
+        socket_raw = socket_raw or os.getenv("BOTAM_BRIDGE_SOCKET", "")
     if len(secret) < 32:
-        raise RuntimeError("BOTAM_BRIDGE_SECRET must be at least 32 characters")
-    socket_path = Path(os.getenv("BOTAM_BRIDGE_SOCKET", "/app/data/botam-003.sock"))
+        raise RuntimeError(f"{prefix}_SECRET must be at least 32 characters")
+    socket_path = Path(socket_raw or f"/app/data/botam-{bot_label}.sock")
     bridge = WebBridge(bot, secret, socket_path)
-    await bridge.start()
+    try:
+        await bridge.start()
+    except Exception:
+        # Startup may fail after AppRunner or the socket is partially created.
+        # Best-effort cleanup prevents an orphaned bridge while main continues
+        # Discord login/connect and scheduler work in fail-open mode.
+        with suppress(Exception):
+            await bridge.close()
+        raise
     return bridge

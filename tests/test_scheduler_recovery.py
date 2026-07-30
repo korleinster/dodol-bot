@@ -1,11 +1,21 @@
 import sqlite3
 import json
+import sys
 import tempfile
+import types
 import unittest
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+
+if "gtts" not in sys.modules:
+    try:
+        __import__("gtts")
+    except ModuleNotFoundError:
+        gtts_stub = types.ModuleType("gtts")
+        gtts_stub.gTTS = object
+        sys.modules["gtts"] = gtts_stub
 
 from src import db as db_module
 from src.cogs import boss as boss_module
