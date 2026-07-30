@@ -149,6 +149,8 @@ Docker Compose configures `/app/data/botam-001.sock` through
 and body digest. Sockets use mode `0660` and may be assigned to the host service
 group with `BOTAM_BRIDGE_GID`. Secrets belong in ignored, permission-restricted
 host environment sources and must never be committed or copied into the image.
+Compose maps only the matching Discord token and numbered bridge secret into
+each service; sibling credentials are not present in that container.
 
 Authenticated guests may use Botam, reset, utilities, mini-games, and
 policy-approved component actions. Process restart, bot summon, channel

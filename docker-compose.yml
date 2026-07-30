@@ -1,3 +1,11 @@
+x-runtime-environment: &runtime-environment
+  DB_PATH: ${DB_PATH:-./data/bot.db}
+  PLAYNC_API_KEY: ${PLAYNC_API_KEY:-}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+  BOTAM_WEB_BRIDGE_ENABLED: "1"
+  BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
+
 services:
   dodol-bot-001:
     build:
@@ -6,13 +14,12 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
     image: dodol-bot:latest
     restart: always
-    env_file: .env
     environment:
+      <<: *runtime-environment
       BOT_NUMBER: "1"
-      BOTAM_WEB_BRIDGE_ENABLED: "1"
-      BOTAM_BRIDGE_001_SECRET: ${BOTAM_BRIDGE_001_SECRET:-}
+      DISCORD_TOKEN_001: ${DISCORD_TOKEN_001:?DISCORD_TOKEN_001 is required}
+      BOTAM_BRIDGE_001_SECRET: ${BOTAM_BRIDGE_001_SECRET:?BOTAM_BRIDGE_001_SECRET is required}
       BOTAM_BRIDGE_001_SOCKET: /app/data/botam-001.sock
-      BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
     volumes:
       - ./data:/app/data
     logging:
@@ -24,13 +31,12 @@ services:
   dodol-bot-002:
     image: dodol-bot:latest
     restart: always
-    env_file: .env
     environment:
+      <<: *runtime-environment
       BOT_NUMBER: "2"
-      BOTAM_WEB_BRIDGE_ENABLED: "1"
-      BOTAM_BRIDGE_002_SECRET: ${BOTAM_BRIDGE_002_SECRET:-}
+      DISCORD_TOKEN_002: ${DISCORD_TOKEN_002:?DISCORD_TOKEN_002 is required}
+      BOTAM_BRIDGE_002_SECRET: ${BOTAM_BRIDGE_002_SECRET:?BOTAM_BRIDGE_002_SECRET is required}
       BOTAM_BRIDGE_002_SOCKET: /app/data/botam-002.sock
-      BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
     volumes:
       - ./data:/app/data
     logging:
@@ -42,14 +48,12 @@ services:
   dodol-bot-003:
     image: dodol-bot:latest
     restart: always
-    env_file:
-      - .env
-      - botam-003-bridge.env
     environment:
+      <<: *runtime-environment
       BOT_NUMBER: "3"
-      BOTAM_WEB_BRIDGE_ENABLED: "1"
+      DISCORD_TOKEN_003: ${DISCORD_TOKEN_003:?DISCORD_TOKEN_003 is required}
+      BOTAM_BRIDGE_003_SECRET: ${BOTAM_BRIDGE_003_SECRET:?BOTAM_BRIDGE_003_SECRET is required}
       BOTAM_BRIDGE_003_SOCKET: /app/data/botam-003.sock
-      BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
     volumes:
       - ./data:/app/data
     logging:
@@ -61,13 +65,12 @@ services:
   dodol-bot-004:
     image: dodol-bot:latest
     restart: always
-    env_file: .env
     environment:
+      <<: *runtime-environment
       BOT_NUMBER: "4"
-      BOTAM_WEB_BRIDGE_ENABLED: "1"
-      BOTAM_BRIDGE_004_SECRET: ${BOTAM_BRIDGE_004_SECRET:-}
+      DISCORD_TOKEN_004: ${DISCORD_TOKEN_004:?DISCORD_TOKEN_004 is required}
+      BOTAM_BRIDGE_004_SECRET: ${BOTAM_BRIDGE_004_SECRET:?BOTAM_BRIDGE_004_SECRET is required}
       BOTAM_BRIDGE_004_SOCKET: /app/data/botam-004.sock
-      BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
     volumes:
       - ./data:/app/data
     logging:

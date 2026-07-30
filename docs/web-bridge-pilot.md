@@ -14,6 +14,9 @@ Each bot receives a separately sourced `BOTAM_BRIDGE_00N_SECRET` and a
 numbered socket path. Secrets are at least 32 characters, distinct from every
 other bridge secret and from session/guest peppers, and are never logged. The
 legacy unnumbered 003 variables are temporary compatibility aliases only.
+Compose resolves the restricted host source but explicitly maps only the
+current bot's Discord token and numbered bridge secret into that service.
+Sibling credentials are not available inside the container.
 
 Requests sign the timestamp, nonce, method, path, and SHA-256 body digest with
 the selected bot's HMAC secret. The bridge rejects invalid signatures, requests
