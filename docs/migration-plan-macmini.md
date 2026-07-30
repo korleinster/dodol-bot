@@ -85,8 +85,10 @@ done
 
 The local multi-bot bridge implementation and production rollout are
 owner-approved; evidence remains pending. Each bot receives a separate token,
-numbered Unix socket, and separately sourced HMAC secret at runtime; secrets
-are never copied into the shared image or committed files. Build the hardened
+numbered Unix socket, and separately sourced HMAC secret at runtime. Compose
+maps only the matching token and HMAC secret into each service; sibling
+credentials are absent from that container. Secrets are never copied into the
+shared image or committed files. Build the hardened
 multi-stage image once, then recreate services sequentially `004 → 001 → 002 →
 003`, recording health and socket/capability evidence before each next step.
 If a gate fails, roll back only that bot and stop; later bots remain untouched.
