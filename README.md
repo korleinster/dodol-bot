@@ -165,6 +165,14 @@ DMs, and non-configured channels. The additive event log keeps up to 24 hours
 and 500 events per bot and guild; the authenticated cursor endpoint replays at
 most 100 events per request.
 
+Bridge target discovery includes a consumer display name without changing the
+Discord account username. The bridge prefers the bot member's guild-specific
+nickname, falls back to the bot account display name, and finally uses a
+generic `보탐봇 N` label. The value is bounded, excludes control and mention
+characters, and is returned as plain text. This additive field lets LeinyGames
+show the same nickname users see in that Discord guild while preserving the
+numeric bot identity for authorization and audit.
+
 ### Shared Discord component actions (M42)
 
 Newly registered buttons are handled by one dispatcher shared by Discord and

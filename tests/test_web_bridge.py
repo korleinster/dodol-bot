@@ -27,7 +27,14 @@ from src import db as db_module
 from src.cogs import tts as tts_module
 from src.cogs.minigame import Minigame
 from src.cogs.tts import TTS, parse_tts_command
-from src.web_bridge import WebBridge, _actor_id, _is_tts_command, start_web_bridge
+from src.web_bridge import (
+    MAX_BOT_DISPLAY_NAME,
+    WebBridge,
+    _actor_id,
+    _is_tts_command,
+    _safe_bot_display_name,
+    start_web_bridge,
+)
 
 
 class WebBridgePolicyTest(unittest.TestCase):
@@ -63,6 +70,18 @@ class WebBridgePolicyTest(unittest.TestCase):
         for command in ("z", "Z", "z+", "Z+", "보탐", "주사위", "v", "ㅍ"):
             with self.subTest(command=command):
                 self.assertFalse(_is_tts_command(command))
+
+    def test_bot_display_name_is_plain_text_bounded_and_mention_safe(self):
+        self.assertEqual(
+            _safe_bot_display_name("  뚠뚠\x00\n<@everyone>  "),
+            "뚠뚠 <＠everyone>",
+        )
+        self.assertEqual(
+            _safe_bot_display_name("가" * (MAX_BOT_DISPLAY_NAME + 1)),
+            "가" * MAX_BOT_DISPLAY_NAME,
+        )
+        self.assertIsNone(_safe_bot_display_name("\x00\u200b\n"))
+        self.assertIsNone(_safe_bot_display_name(None))
 
 
 class VoiceRuntimeCapabilityTest(unittest.IsolatedAsyncioTestCase):
@@ -291,8 +310,12 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         self.bot = SimpleNamespace(
             bot_number=3,
-            user=SimpleNamespace(id=999),
-            get_guild=lambda guild_id: SimpleNamespace(id=guild_id, name=f"길드 {guild_id}"),
+            user=SimpleNamespace(id=999, display_name="전역 뚠뚠봇", name="global-name"),
+            get_guild=lambda guild_id: SimpleNamespace(
+                id=guild_id,
+                name=f"길드 {guild_id}",
+                me=SimpleNamespace(display_name="서버 전용 뚠뚠봇") if guild_id == 100 else None,
+            ),
         )
         self.bridge = WebBridge(self.bot, "b" * 32, Path(self.tmp.name) / "bridge.sock")
 
@@ -507,6 +530,8 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(targets["100"]["capabilities"]["tts"])
         self.assertFalse(targets["101"]["capabilities"]["tts"])
         self.assertTrue(targets["100"]["capabilities"]["commands"])
+        self.assertEqual(targets["100"]["botDisplayName"], "서버 전용 뚠뚠봇")
+        self.assertEqual(targets["101"]["botDisplayName"], "전역 뚠뚠봇")
 
         bot1 = SimpleNamespace(
             bot_number=1,
@@ -519,6 +544,33 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
         target1 = json.loads(response1.body)["targets"][0]
         self.assertEqual(target1["botNumber"], 1)
         self.assertTrue(target1["capabilities"]["tts"])
+
+    async def test_targets_fall_back_to_a_safe_numbered_bot_name(self):
+        self.bot.user = SimpleNamespace(id=999, display_name="\x00", name="\u200b")
+        self.bot.get_guild = lambda guild_id: SimpleNamespace(id=guild_id, name=f"길드 {guild_id}")
+        self.bridge._authenticate = AsyncMock(return_value=b"")
+        response = await self.bridge.targets(SimpleNamespace())
+        targets = json.loads(response.body)["targets"]
+        self.assertEqual({target["botDisplayName"] for target in targets}, {"보탐봇 3"})
+
+    async def test_owner_component_fallback_uses_administrator_label(self):
+        self.bridge._json = AsyncMock(return_value={
+            "requestId": "request-owner-001",
+            "actorRef": "owner:session",
+            "nickname": "",
+            "actorType": "owner",
+            "customId": "test-action",
+            "guildId": "100",
+            "messageId": "1",
+        })
+        self.bridge.component_dispatcher.dispatch = AsyncMock(
+            return_value=SimpleNamespace(payload=lambda: {}),
+        )
+
+        await self.bridge.component_actions(SimpleNamespace())
+
+        actor = self.bridge.component_dispatcher.dispatch.await_args.kwargs["actor"]
+        self.assertEqual(actor.display_name, "웹 · 관리자")
 
     async def test_tts_without_voice_is_rejected_before_job_or_queue_creation(self):
         self.bridge._json = AsyncMock(return_value={

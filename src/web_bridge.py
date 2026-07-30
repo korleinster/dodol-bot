@@ -10,6 +10,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ BRIDGE_BOT_NUMBERS = frozenset(range(1, 5))
 MAX_BODY_BYTES = 8 * 1024
 MAX_TTS_CHARS = 200
 MAX_TTS_QUEUE = 3
+MAX_BOT_DISPLAY_NAME = 80
 NONCE_TTL_SECONDS = 60
 JOB_TTL_SECONDS = 15 * 60
 BLOCKED_COMMANDS = {"재시작", "정신차려"}
@@ -166,6 +168,22 @@ def _message_content(message: discord.Message) -> str:
     if content is None:
         content = getattr(message, "content", "")
     return str(content)
+
+
+def _safe_bot_display_name(value: Any) -> str | None:
+    """Return a bounded plain-text bot label safe for downstream consumers."""
+    if not isinstance(value, str):
+        return None
+    # Discord names can contain formatting, controls, and mention syntax. Keep
+    # a readable plain-text label without allowing a downstream renderer to
+    # interpret it as a Discord mention.
+    value = unicodedata.normalize("NFKC", value)
+    value = "".join(
+        " " if unicodedata.category(char).startswith("C") else char
+        for char in value
+    )
+    value = " ".join(value.split()).replace("@", "＠")
+    return value[:MAX_BOT_DISPLAY_NAME] or None
 
 
 def _event_key(
@@ -384,6 +402,7 @@ class WebBridge:
             targets.append({
                 "guildId": str(guild_id),
                 "guildName": guild.name if guild else f"Discord {guild_id}",
+                "botDisplayName": self._bot_display_name(guild),
                 "botNumber": self.bot.bot_number,
                 "textChannelId": str(text_id),
                 "voiceChannelId": str(voice_id) if voice_id else None,
@@ -396,6 +415,28 @@ class WebBridge:
                 "scheduler": _scheduler_health_payload(self.bot),
             })
         return web.json_response({"targets": targets})
+
+    def _bot_display_name(self, guild: discord.Guild | None) -> str:
+        """Resolve a safe label without requiring an additional Discord fetch."""
+        member = getattr(guild, "me", None) if guild else None
+        bot_user = getattr(self.bot, "user", None)
+        if member is None and guild and bot_user:
+            get_member = getattr(guild, "get_member", None)
+            if callable(get_member):
+                member = get_member(getattr(bot_user, "id", None))
+
+        for candidate in (
+            getattr(member, "display_name", None),
+            getattr(bot_user, "display_name", None),
+            getattr(bot_user, "name", None),
+        ):
+            if name := _safe_bot_display_name(candidate):
+                return name
+
+        bot_number = getattr(self.bot, "bot_number", None)
+        if type(bot_number) is int and bot_number in BRIDGE_BOT_NUMBERS:
+            return f"보탐봇 {bot_number}"
+        return "보탐봇"
 
     async def broadcast_events(self, request: web.Request) -> web.Response:
         """Return this bridge bot's retained message feed for one guild."""
@@ -704,7 +745,7 @@ class WebBridge:
         ):
             raise web.HTTPBadRequest(text="invalid web actor")
         if actor_type == "owner" and not nickname:
-            nickname = "사장"
+            nickname = "관리자"
         if guild_id <= 0 or message_id <= 0 or not custom_id or len(custom_id) > 100:
             raise web.HTTPBadRequest(text="invalid component target")
 
