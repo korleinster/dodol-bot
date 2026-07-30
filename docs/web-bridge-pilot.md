@@ -49,6 +49,20 @@ use restricted controls. Unknown, policy-less, disabled, stale, or
 wrong-channel components fail closed. Claims are idempotent and outcomes never
 contain passwords, cookies, signatures, HMAC material, or tracebacks.
 
+## Consumer bot display name
+
+Every target response includes the additive `botDisplayName` field. It is
+derived from the bot member's guild-specific Discord nickname, then the bot
+account display name/username, then a generic `보탐봇 N` fallback. The
+bridge bounds and sanitizes the plain-text value and never treats it as a
+command, mention, or formatting fragment.
+
+The numeric `botNumber` and configured guild remain the authorization keys.
+Changing the Discord nickname changes only presentation; it cannot redirect a
+request, select another bot, or alter a stored access profile. During a rolling
+upgrade, LeinyGames accepts an older target without the field and applies its
+own generic fallback.
+
 ## Bot-authored feed and scheduler health
 
 Each bot mirrors only its own bot-authored messages in its configured guild and
