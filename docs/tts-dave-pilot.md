@@ -1,8 +1,8 @@
-# W8 TTS and Voice Runtime Contract
+# W8/W10 TTS and Voice Runtime Contract
 
-This document applies to bots 001–004. Revision 3 implementation and the
-sequential production rollout are owner-approved; evidence is recorded at each
-bot gate.
+This document applies to bots 001–004. W10 Revision 2 adds the owner-selected
+bot-003 Edge Neural voice pilot. Production deployment and container recreation
+remain a separate approval boundary.
 
 ## Command contract
 
@@ -22,10 +22,27 @@ path.
 
 ## Voice dependency contract
 
-The image pins `discord.py[voice]==2.7.1`, verifies `davey` and PyNaCl, and
-installs FFmpeg for gTTS playback. A target advertises `tts: true` only when
-its voice channel is configured and all pinned runtime checks pass. Otherwise
-TTS fails closed with a safe capability/error response and no queued job.
+The image pins `discord.py[voice]==2.7.1`, `edge-tts==7.2.8`, `gTTS==2.5.1`,
+`davey`, and PyNaCl, and installs FFmpeg for playback. A target advertises
+`tts: true` only when its voice channel is configured and all pinned runtime
+checks pass. Otherwise TTS fails closed with a safe capability/error response
+and no queued job.
+
+Bot 003 resolves these non-secret settings from its service environment:
+
+```text
+TTS_PROVIDER=edge
+TTS_EDGE_VOICE=ko-KR-SunHiNeural
+TTS_EDGE_RATE=+8%
+TTS_EDGE_PITCH=+8Hz
+```
+
+Edge synthesis is limited to 20 seconds. A timeout, unavailable dependency, or
+provider error triggers exactly one gTTS attempt. Temporary audio is removed on
+synthesis failure, connection failure, playback failure, timeout, and
+cancellation. Bots 001, 002, and 004 always select gTTS, even if an unrelated
+global environment contains Edge settings. Setting `TTS_PROVIDER_003=gtts` in
+the host environment disables the bot-003 pilot without a code change.
 
 ## Local verification
 
@@ -42,7 +59,8 @@ docker compose config --quiet
 Verify all four numbered bridge secrets and sockets are configured without
 printing their values. Verify each target's text/voice capability and run `v`
 and `ㅍ` probes plus `Z`/`Z+` queue-invariance probes in test doubles or a
-non-production environment.
+non-production environment. For bot 003, also verify the exact SunHi voice,
+rate, pitch, 20-second timeout, single gTTS fallback, and temporary-file cleanup.
 
 ## Secure image checks
 
@@ -53,9 +71,10 @@ secret, database, log, backup, VCS, or cache files. The deny-by-default
 `.dockerignore` is part of the security boundary; do not bypass it with a
 broad build context.
 
-## Approved rollout and rollback order
+## Rollout and rollback order
 
-Recreate one service at a time in this owner-approved order:
+After separate deployment and restart approval, recreate one service at a time
+in this order:
 
 `dodol-bot-004 → dodol-bot-001 → dodol-bot-002 → dodol-bot-003`
 

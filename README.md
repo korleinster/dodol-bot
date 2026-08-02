@@ -42,7 +42,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 | Language | Python 3.11 |
 | Bot framework | discord.py[voice] 2.7.1 |
 | Voice encryption | DAVE via the required `davey` runtime dependency |
-| TTS | gTTS (Google TTS, `ko`) |
+| TTS | Edge Neural `SunHi` for bot 003, with gTTS fallback; gTTS for bots 001/002/004 |
 | Database | SQLite + aiosqlite |
 | Price API | PLAYNC Developer Center (`dev-api.plaync.com/l2m/v1.0`) |
 | Weather API | Open-Meteo (free, no key required) |
@@ -206,6 +206,11 @@ or timed-out action keeps a safe retry path and never reports success by
 assumption. Claim/audit data excludes passwords, cookies, bridge signatures,
 HMAC secrets, and stack traces.
 
+Discord acknowledges a successful kill/miss button interaction silently. It
+does not add a private success card after the public result and source-button
+update. Duplicate, denied, and failed actions still return one private notice
+with the safe reason.
+
 Bridge target responses also expose a detail-free scheduler status with
 `starting`, `ready`, or `failed`, the bootstrap and latest successful tick
 timestamps, and a bounded error code. Exception text and tracebacks are never
@@ -235,6 +240,12 @@ Manual voice behavior is deliberately narrow:
   background behavior is independent of manual command routing. Repeated miss
   counts keep the `(미입력×N)` display notation but are spoken once as
   `미입력 N회`, preventing the miss label from being repeated N times.
+
+Bot 003 uses the key-free Edge Neural `ko-KR-SunHiNeural` pilot at `+8%` rate
+and `+8Hz` pitch. Edge synthesis has a 20-second limit and falls back once to
+the existing Korean gTTS voice. Bots 001, 002, and 004 remain on gTTS even
+though the shared image contains the Edge dependency. `TTS_PROVIDER_003=gtts`
+is the immediate no-code rollback for the pilot voice.
 
 The DAVE/voice dependency and exact local and container checks are defined in
 [`docs/tts-dave-pilot.md`](docs/tts-dave-pilot.md). Each target advertises TTS
@@ -356,7 +367,7 @@ When a boss's appearance time arrives, **3-stage alerts** are sent automatically
 | 1 min before | 🟠 Orange | ⚠️ Appears in 1 minute |
 | Exact time | 🔴 Red | ⚔️ Boss appeared! + TTS + **Kill/Miss buttons** |
 
-The exact-time alert shows **✅ Kill / 😶 Miss** buttons. Pressing them immediately processes the kill or miss (buttons not shown for fixed-schedule bosses). The same registered buttons are available in the bot-003 web feed when their `allowNonAdmin` policy permits the current actor; cut and miss remain one idempotent message-level action.
+The exact-time alert shows **✅ Kill / 😶 Miss** buttons. Pressing them immediately processes the kill or miss (buttons not shown for fixed-schedule bosses). A successful Discord click is acknowledged silently; only duplicate, denied, or failed actions create a private notice. The same registered buttons are available in the web feed when their `allowNonAdmin` policy permits the current actor; cut and miss remain one idempotent message-level action.
 
 ```
 보탐 / ㅂㅌ / ㅋ / z  ← next 5 upcoming reservations (total count shown)
@@ -439,7 +450,7 @@ Configure the grace period before a boss is auto-scheduled when no kill/miss is 
 
 ### TTS
 
-Reads text aloud in the assigned voice channel (gTTS, Korean). Maintains a permanent voice channel connection.
+Reads text aloud in the assigned voice channel and maintains a permanent voice connection. Bot 003 uses the selected Edge Neural `SunHi` pilot with one gTTS fallback; bots 001, 002, and 004 retain Korean gTTS.
 Manual TTS is deliberately limited to the two commands below:
 
 ```

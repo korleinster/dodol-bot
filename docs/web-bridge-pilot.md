@@ -37,7 +37,9 @@ pinned voice runtime is healthy. Manual TTS accepts only `v <text>` and
 `ㅍ <text>`, with a 200-character limit and at most three queued web jobs per
 bridge. `Z`, `Z+`, and lowercase reservation aliases are text/list-only and do
 not call the TTS cog. Scheduled exact-time alerts retain their automatic TTS
-path independently.
+path independently. Bot 003 uses the selected Edge Neural SunHi pilot at `+8%`
+rate and `+8Hz` pitch with a 20-second synthesis limit and one gTTS fallback;
+bots 001, 002, and 004 remain on gTTS.
 
 ## Shared component actions
 
@@ -48,6 +50,9 @@ actors require `allowNonAdmin=true`; owner web and Discord administrators may
 use restricted controls. Unknown, policy-less, disabled, stale, or
 wrong-channel components fail closed. Claims are idempotent and outcomes never
 contain passwords, cookies, signatures, HMAC material, or tracebacks.
+Successful Discord cut/miss clicks use a silent deferred message update and do
+not create an additional private success card. Duplicate, denied, and failed
+actions keep one private safe-reason notice. Web result contracts are unchanged.
 
 ## Consumer bot display name
 
@@ -104,7 +109,8 @@ never inject production secrets into a build argument or image layer.
 
 ## Deployment boundary
 
-Local implementation and the sequential rollout are owner-approved; production
-evidence is pending. Do not open a new port or change Tailscale. See the leinsterCenter
+W10 local implementation is owner-approved; its production deployment and
+container recreation require separate owner approval. Do not open a new port
+or change Tailscale. See the leinsterCenter
 [`M44-DEPLOYMENT.md`](../../leinsterCenter/ops/M44-DEPLOYMENT.md) runbook for
 the owner-approval gates and evidence record.
