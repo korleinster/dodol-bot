@@ -324,7 +324,10 @@ class Boss(commands.Cog):
 
         response = getattr(interaction, "response", None)
         if response is not None and not response.is_done():
-            await response.defer(ephemeral=True, thinking=True)
+            # A component interaction still needs an acknowledgement within
+            # Discord's response window.  A deferred message update is silent
+            # to the user; the dispatcher updates the source message itself.
+            await response.defer(thinking=False)
         member_permissions = getattr(getattr(interaction, "user", None), "guild_permissions", None)
         interaction_permissions = getattr(interaction, "permissions", None)
         is_admin = bool(
@@ -346,9 +349,7 @@ class Boss(commands.Cog):
         followup = getattr(interaction, "followup", None)
         if followup is None:
             return
-        if result.status == "succeeded":
-            await followup.send("처리했어. 결과는 채널에 공유됐어.", ephemeral=True)
-        elif result.status == "already_processed":
+        if result.status == "already_processed":
             await followup.send("이미 처리된 보스 알림입니다.", ephemeral=True)
         elif not result.succeeded:
             await followup.send(result.error_message or "버튼 처리에 실패했습니다.", ephemeral=True)
