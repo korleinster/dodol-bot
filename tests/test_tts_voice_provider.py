@@ -29,19 +29,19 @@ from src.cogs.tts import (
 
 
 class TTSProviderSettingsTest(unittest.TestCase):
-    def test_003_defaults_to_selected_edge_female_voice(self):
-        self.assertEqual(
-            get_tts_provider_settings(3, {}),
-            TTSProviderSettings(
-                provider="edge",
-                voice=DEFAULT_EDGE_VOICE,
-                rate=DEFAULT_EDGE_RATE,
-                pitch=DEFAULT_EDGE_PITCH,
-            ),
+    def test_all_numbered_bots_default_to_selected_edge_female_voice(self):
+        expected = TTSProviderSettings(
+            provider="edge",
+            voice=DEFAULT_EDGE_VOICE,
+            rate=DEFAULT_EDGE_RATE,
+            pitch=DEFAULT_EDGE_PITCH,
         )
+        for bot_number in range(1, 5):
+            with self.subTest(bot_number=bot_number):
+                self.assertEqual(get_tts_provider_settings(bot_number, {}), expected)
 
-    def test_003_keeps_the_verified_voice_and_sanitizes_invalid_values(self):
-        configured = get_tts_provider_settings(3, {
+    def test_numbered_bots_keep_the_verified_voice_and_sanitize_invalid_values(self):
+        configured = get_tts_provider_settings(1, {
             "TTS_PROVIDER": "edge",
             "TTS_EDGE_VOICE": DEFAULT_EDGE_VOICE,
             "TTS_EDGE_RATE": "+12%",
@@ -51,7 +51,7 @@ class TTSProviderSettingsTest(unittest.TestCase):
             configured,
             TTSProviderSettings("edge", DEFAULT_EDGE_VOICE, "+12%", "-3Hz"),
         )
-        invalid = get_tts_provider_settings(3, {
+        invalid = get_tts_provider_settings(4, {
             "TTS_PROVIDER": "edge",
             "TTS_EDGE_VOICE": "ko-KR-SeoHyeonNeural",
             "TTS_EDGE_RATE": "fast",
@@ -62,11 +62,17 @@ class TTSProviderSettingsTest(unittest.TestCase):
             TTSProviderSettings("edge", DEFAULT_EDGE_VOICE, DEFAULT_EDGE_RATE, DEFAULT_EDGE_PITCH),
         )
 
-    def test_non_003_bots_remain_gtts_even_if_global_edge_settings_exist(self):
-        environment = {"TTS_PROVIDER": "edge", "TTS_EDGE_VOICE": "ko-KR-SeoHyeonNeural"}
-        for bot_number in (1, 2, 4):
+    def test_each_numbered_bot_can_independently_opt_out_to_gtts(self):
+        environment = {"TTS_PROVIDER": "gtts"}
+        for bot_number in range(1, 5):
             with self.subTest(bot_number=bot_number):
                 self.assertEqual(get_tts_provider_settings(bot_number, environment), TTSProviderSettings("gtts"))
+
+    def test_unknown_bot_number_fails_safely_to_gtts(self):
+        self.assertEqual(
+            get_tts_provider_settings(5, {"TTS_PROVIDER": "edge"}),
+            TTSProviderSettings("gtts"),
+        )
 
 
 class TTSSynthesisFallbackTest(unittest.IsolatedAsyncioTestCase):
@@ -161,7 +167,10 @@ class TTSSynthesisFallbackTest(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / "speech.mp3")
             task = None
-            with patch.object(tts_module, "_save_tts", delayed_gtts):
+            with (
+                patch.object(cog, "_provider_settings", return_value=TTSProviderSettings("gtts")),
+                patch.object(tts_module, "_save_tts", delayed_gtts),
+            ):
                 task = asyncio.create_task(cog._synthesize("테스트", path))
                 await asyncio.get_running_loop().run_in_executor(None, started.wait)
                 task.cancel()

@@ -32,6 +32,7 @@ EDGE_TTS_TIMEOUT_SECONDS = 20
 DEFAULT_EDGE_VOICE = "ko-KR-SunHiNeural"
 DEFAULT_EDGE_RATE = "+8%"
 DEFAULT_EDGE_PITCH = "+8Hz"
+EDGE_TTS_BOT_NUMBERS = frozenset(range(1, 5))
 _EDGE_RATE_RE = re.compile(r"^[+-]\d+%$")
 _EDGE_PITCH_RE = re.compile(r"^[+-]\d+Hz$")
 _TTS_SYNTHESIS_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tts-synthesis")
@@ -56,7 +57,7 @@ def _safe_env_value(
 
 
 def _safe_edge_voice(environ: Mapping[str, str]) -> str:
-    """Keep the free 003 pilot on the one verified Edge Korean female voice."""
+    """Keep every bot on the one verified free Edge Korean female voice."""
     value = environ.get("TTS_EDGE_VOICE", DEFAULT_EDGE_VOICE).strip()
     return value if value == DEFAULT_EDGE_VOICE else DEFAULT_EDGE_VOICE
 
@@ -64,13 +65,13 @@ def _safe_edge_voice(environ: Mapping[str, str]) -> str:
 def get_tts_provider_settings(
     bot_number: int, environ: Mapping[str, str] | None = None,
 ) -> TTSProviderSettings:
-    """Select Edge only for the 003 pilot; every other bot keeps gTTS.
+    """Select the approved Edge voice independently for bots 001-004.
 
-    TTS_PROVIDER may explicitly opt 003 out to gTTS for a quick operational
-    rollback. Any other value fails safely to gTTS instead of attempting an
-    unknown provider.
+    Each process receives its own mapped TTS_PROVIDER value. It may opt that
+    bot out to gTTS for a quick operational rollback. Unknown bot numbers and
+    unknown provider values fail safely to gTTS.
     """
-    if bot_number != 3:
+    if bot_number not in EDGE_TTS_BOT_NUMBERS:
         return TTSProviderSettings(provider="gtts")
 
     environment = os.environ if environ is None else environ
@@ -222,9 +223,9 @@ class TTS(commands.Cog):
     async def _synthesize(self, text: str, path: str) -> str:
         """Create one audio file and return the provider that succeeded.
 
-        Edge is deliberately a 003-only pilot. A timeout or provider error does
-        not prevent an alert from being read: the existing gTTS implementation
-        is attempted exactly once as a fallback.
+        A timeout or provider error does not prevent an alert from being read:
+        the existing gTTS implementation is attempted exactly once as a
+        per-process fallback.
         """
         settings = self._provider_settings()
         if settings.provider == "edge":

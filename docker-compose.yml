@@ -17,6 +17,10 @@ services:
     environment:
       <<: *runtime-environment
       BOT_NUMBER: "1"
+      TTS_PROVIDER: ${TTS_PROVIDER_001:-edge}
+      TTS_EDGE_VOICE: ${TTS_EDGE_VOICE_001:-ko-KR-SunHiNeural}
+      TTS_EDGE_RATE: ${TTS_EDGE_RATE_001:-+8%}
+      TTS_EDGE_PITCH: ${TTS_EDGE_PITCH_001:-+8Hz}
       DISCORD_TOKEN_001: ${DISCORD_TOKEN_001:?DISCORD_TOKEN_001 is required}
       BOTAM_BRIDGE_001_SECRET: ${BOTAM_BRIDGE_001_SECRET:?BOTAM_BRIDGE_001_SECRET is required}
       BOTAM_BRIDGE_001_SOCKET: /app/data/botam-001.sock
@@ -34,6 +38,10 @@ services:
     environment:
       <<: *runtime-environment
       BOT_NUMBER: "2"
+      TTS_PROVIDER: ${TTS_PROVIDER_002:-edge}
+      TTS_EDGE_VOICE: ${TTS_EDGE_VOICE_002:-ko-KR-SunHiNeural}
+      TTS_EDGE_RATE: ${TTS_EDGE_RATE_002:-+8%}
+      TTS_EDGE_PITCH: ${TTS_EDGE_PITCH_002:-+8Hz}
       DISCORD_TOKEN_002: ${DISCORD_TOKEN_002:?DISCORD_TOKEN_002 is required}
       BOTAM_BRIDGE_002_SECRET: ${BOTAM_BRIDGE_002_SECRET:?BOTAM_BRIDGE_002_SECRET is required}
       BOTAM_BRIDGE_002_SOCKET: /app/data/botam-002.sock
@@ -51,7 +59,6 @@ services:
     environment:
       <<: *runtime-environment
       BOT_NUMBER: "3"
-      # 003 only: free Edge Neural voice pilot. Other bots retain gTTS.
       TTS_PROVIDER: ${TTS_PROVIDER_003:-edge}
       TTS_EDGE_VOICE: ${TTS_EDGE_VOICE_003:-ko-KR-SunHiNeural}
       TTS_EDGE_RATE: ${TTS_EDGE_RATE_003:-+8%}
@@ -73,6 +80,10 @@ services:
     environment:
       <<: *runtime-environment
       BOT_NUMBER: "4"
+      TTS_PROVIDER: ${TTS_PROVIDER_004:-edge}
+      TTS_EDGE_VOICE: ${TTS_EDGE_VOICE_004:-ko-KR-SunHiNeural}
+      TTS_EDGE_RATE: ${TTS_EDGE_RATE_004:-+8%}
+      TTS_EDGE_PITCH: ${TTS_EDGE_PITCH_004:-+8Hz}
       DISCORD_TOKEN_004: ${DISCORD_TOKEN_004:?DISCORD_TOKEN_004 is required}
       BOTAM_BRIDGE_004_SECRET: ${BOTAM_BRIDGE_004_SECRET:?BOTAM_BRIDGE_004_SECRET is required}
       BOTAM_BRIDGE_004_SOCKET: /app/data/botam-004.sock
