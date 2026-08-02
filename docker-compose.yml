@@ -51,6 +51,11 @@ services:
     environment:
       <<: *runtime-environment
       BOT_NUMBER: "3"
+      # 003 only: free Edge Neural voice pilot. Other bots retain gTTS.
+      TTS_PROVIDER: ${TTS_PROVIDER_003:-edge}
+      TTS_EDGE_VOICE: ${TTS_EDGE_VOICE_003:-ko-KR-SunHiNeural}
+      TTS_EDGE_RATE: ${TTS_EDGE_RATE_003:-+8%}
+      TTS_EDGE_PITCH: ${TTS_EDGE_PITCH_003:-+8Hz}
       DISCORD_TOKEN_003: ${DISCORD_TOKEN_003:?DISCORD_TOKEN_003 is required}
       BOTAM_BRIDGE_003_SECRET: ${BOTAM_BRIDGE_003_SECRET:?BOTAM_BRIDGE_003_SECRET is required}
       BOTAM_BRIDGE_003_SOCKET: /app/data/botam-003.sock
