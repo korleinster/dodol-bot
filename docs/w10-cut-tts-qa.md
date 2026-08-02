@@ -31,11 +31,26 @@ gTTS cancellation cleanup, invalid voice fallback, bot isolation, web queue
 completion/failure, scheduler recovery, and reservation commands that must not
 enter TTS.
 
-## Pending production evidence
+## Bot-003 production rollout evidence
 
-- No production container was recreated and no service was restarted.
-- Real Discord cut/miss interaction appearance and bot-003 voice-channel
-  playback remain pending the separate deployment/restart approval.
-- When approved, use the established `004 → 001 → 002 → 003` gate order and
-  stop at the first failed bot. Do not change the database, ports, or Tailscale.
+The owner separately approved an immediate bot-003-only rollout on 2026-08-02.
 
+- Production source fast-forwarded from `a93f607` to implementation commit
+  `5c67dd7`; the existing untracked `logs/` directory was preserved.
+- The previous shared image ID was retained as
+  `dodol-bot:rollback-a93f607` before the new image build.
+- The shared image built successfully with `edge-tts==7.2.8`, and only
+  `dodol-bot-003` was force-recreated. Bots 001, 002, and 004 remained on the
+  previous image and stayed up without recreation.
+- Bot 003 reported commit `5c67dd7`, Discord online, scheduler recovery
+  complete, voice channel `일반` connected, and its web bridge socket ready.
+- The numbered socket existed at mode `660` with the expected shared group.
+- Runtime settings resolved to Edge `ko-KR-SunHiNeural`, `+8%`, and `+8Hz`.
+- A direct synthesis inside the production container produced a non-empty
+  20,304-byte MP3 and removed it immediately without voice-channel playback.
+- The public LeinyGames HTTPS health endpoint returned `status: ok`; no new
+  startup, scheduler, bridge, or TTS error appeared in the post-rollout logs.
+
+Live audible TTS and the visual Discord cut/miss interaction remain user-facing
+smoke checks; the rollout did not send a test command into the production guild.
+The database, external ports, and Tailscale were not changed.
