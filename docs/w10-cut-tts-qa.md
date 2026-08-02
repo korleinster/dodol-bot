@@ -5,9 +5,9 @@
 - Successful Discord cut/miss button interactions use a silent deferred message
   update and do not send a private success card.
 - Duplicate, denied, and failed actions keep one private safe-reason notice.
-- Bot 003 selects Edge `ko-KR-SunHiNeural` at `+8%` rate and `+8Hz` pitch.
+- Bots 001–004 select Edge `ko-KR-SunHiNeural` at `+8%` rate and `+8Hz` pitch.
 - Edge synthesis is limited to 20 seconds and falls back to gTTS exactly once.
-- Bots 001, 002, and 004 always select gTTS.
+- Each bot can independently opt out to gTTS without changing a sibling.
 - Edge and gTTS write provider-private files before an atomic replace so a
   timeout or cancelled late writer cannot overwrite playable audio.
 - Manual `v` and `ㅍ`, web TTS, and scheduled exact-time alerts share the same
@@ -15,12 +15,14 @@
 
 ## Local evidence
 
-- `python -m unittest discover -s tests -p 'test*.py'`: 75 tests passed.
+- `python -m unittest discover -s tests -p 'test*.py'`: 76 tests passed.
 - `python -m compileall -q main.py src tests`: passed.
 - Pinned runtime imports for discord.py 2.7.1, DAVE, PyNaCl, edge-tts, and gTTS:
   passed in the isolated Python 3.11 environment.
 - Docker Compose v5.1.4 standalone binary checksum matched the official release
-  SHA-256, and `config --quiet` passed with non-secret test credentials.
+  SHA-256, and `config --quiet` passed with non-secret test credentials. The
+  rendered configuration resolved every bot independently to Edge SunHi at
+  `+8%`/`+8Hz`.
 - A direct network synthesis through the implemented Edge adapter produced a
   non-empty SunHi `+8%`/`+8Hz` MP3.
 - `git diff --check`: passed.
@@ -31,7 +33,21 @@ gTTS cancellation cleanup, invalid voice fallback, bot isolation, web queue
 completion/failure, scheduler recovery, and reservation commands that must not
 enter TTS.
 
-## Production rollout evidence
+## Revision 3 implementation decision
+
+The owner approved expanding the selected Edge voice to bots 001–004 and
+approved direct implementation, deployment, and the required service
+recreations. Each service maps numbered provider and prosody variables into the
+same unnumbered process contract, preserving independent rollback. Unknown bot
+numbers and unsupported provider or voice values fail safely to gTTS or the
+verified SunHi default.
+
+At approval time, production DB inspection showed configured voice channels for
+bots 001 and 003 only. Bots 002 and 004 receive the Edge provider but keep TTS
+capability unavailable until an administrator assigns their voice channels;
+this revision does not change Discord channel settings.
+
+## Revision 2 production rollout evidence
 
 The owner separately approved an immediate bot-003-only rollout on 2026-08-02.
 

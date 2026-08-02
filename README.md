@@ -42,7 +42,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 | Language | Python 3.11 |
 | Bot framework | discord.py[voice] 2.7.1 |
 | Voice encryption | DAVE via the required `davey` runtime dependency |
-| TTS | Edge Neural `SunHi` for bot 003, with gTTS fallback; gTTS for bots 001/002/004 |
+| TTS | Per-bot Edge Neural `SunHi` with one gTTS fallback |
 | Database | SQLite + aiosqlite |
 | Price API | PLAYNC Developer Center (`dev-api.plaync.com/l2m/v1.0`) |
 | Weather API | Open-Meteo (free, no key required) |
@@ -241,11 +241,12 @@ Manual voice behavior is deliberately narrow:
   counts keep the `(미입력×N)` display notation but are spoken once as
   `미입력 N회`, preventing the miss label from being repeated N times.
 
-Bot 003 uses the key-free Edge Neural `ko-KR-SunHiNeural` pilot at `+8%` rate
-and `+8Hz` pitch. Edge synthesis has a 20-second limit and falls back once to
-the existing Korean gTTS voice. Bots 001, 002, and 004 remain on gTTS even
-though the shared image contains the Edge dependency. `TTS_PROVIDER_003=gtts`
-is the immediate no-code rollback for the pilot voice.
+Bots 001–004 use the key-free Edge Neural `ko-KR-SunHiNeural` voice at `+8%`
+rate and `+8Hz` pitch. Edge synthesis has a 20-second limit and falls back once
+to the existing Korean gTTS voice. Each service maps its own numbered provider
+and prosody variables, so `TTS_PROVIDER_00N=gtts` rolls back only that bot.
+Bots without a configured voice channel keep the provider ready but do not
+advertise or attempt playback until a channel is assigned.
 
 The DAVE/voice dependency and exact local and container checks are defined in
 [`docs/tts-dave-pilot.md`](docs/tts-dave-pilot.md). Each target advertises TTS
@@ -450,7 +451,7 @@ Configure the grace period before a boss is auto-scheduled when no kill/miss is 
 
 ### TTS
 
-Reads text aloud in the assigned voice channel and maintains a permanent voice connection. Bot 003 uses the selected Edge Neural `SunHi` pilot with one gTTS fallback; bots 001, 002, and 004 retain Korean gTTS.
+Reads text aloud in the assigned voice channel and maintains a permanent voice connection. Bots 001–004 use the selected Edge Neural `SunHi` voice with an independent one-time gTTS fallback.
 Manual TTS is deliberately limited to the two commands below:
 
 ```

@@ -37,9 +37,9 @@ pinned voice runtime is healthy. Manual TTS accepts only `v <text>` and
 `ㅍ <text>`, with a 200-character limit and at most three queued web jobs per
 bridge. `Z`, `Z+`, and lowercase reservation aliases are text/list-only and do
 not call the TTS cog. Scheduled exact-time alerts retain their automatic TTS
-path independently. Bot 003 uses the selected Edge Neural SunHi pilot at `+8%`
-rate and `+8Hz` pitch with a 20-second synthesis limit and one gTTS fallback;
-bots 001, 002, and 004 remain on gTTS.
+path independently. Bots 001–004 use the selected Edge Neural SunHi voice at
+`+8%` rate and `+8Hz` pitch with a 20-second synthesis limit and one gTTS
+fallback. Provider and prosody settings remain isolated per numbered service.
 
 ## Shared component actions
 

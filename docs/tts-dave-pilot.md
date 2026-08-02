@@ -1,8 +1,8 @@
 # W8/W10 TTS and Voice Runtime Contract
 
-This document applies to bots 001–004. W10 Revision 2 adds the owner-selected
-bot-003 Edge Neural voice pilot. Production deployment and container recreation
-remain a separate approval boundary.
+This document applies to bots 001–004. W10 Revision 3 expands the owner-selected
+Edge Neural voice from the bot-003 pilot to every numbered bot while preserving
+per-bot rollback and voice-channel capability gating.
 
 ## Command contract
 
@@ -28,7 +28,7 @@ The image pins `discord.py[voice]==2.7.1`, `edge-tts==7.2.8`, `gTTS==2.5.1`,
 checks pass. Otherwise TTS fails closed with a safe capability/error response
 and no queued job.
 
-Bot 003 resolves these non-secret settings from its service environment:
+Each bot resolves these non-secret settings from its own service environment:
 
 ```text
 TTS_PROVIDER=edge
@@ -40,9 +40,9 @@ TTS_EDGE_PITCH=+8Hz
 Edge synthesis is limited to 20 seconds. A timeout, unavailable dependency, or
 provider error triggers exactly one gTTS attempt. Temporary audio is removed on
 synthesis failure, connection failure, playback failure, timeout, and
-cancellation. Bots 001, 002, and 004 always select gTTS, even if an unrelated
-global environment contains Edge settings. Setting `TTS_PROVIDER_003=gtts` in
-the host environment disables the bot-003 pilot without a code change.
+cancellation. Compose maps `TTS_PROVIDER_00N` and matching numbered voice,
+rate, and pitch variables into only that service. Setting one numbered provider
+to `gtts` disables Edge for that bot without changing its siblings.
 
 ## Local verification
 
@@ -59,7 +59,7 @@ docker compose config --quiet
 Verify all four numbered bridge secrets and sockets are configured without
 printing their values. Verify each target's text/voice capability and run `v`
 and `ㅍ` probes plus `Z`/`Z+` queue-invariance probes in test doubles or a
-non-production environment. For bot 003, also verify the exact SunHi voice,
+non-production environment. For every bot, also verify the exact SunHi voice,
 rate, pitch, 20-second timeout, single gTTS fallback, and temporary-file cleanup.
 
 ## Secure image checks
