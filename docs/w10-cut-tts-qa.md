@@ -86,3 +86,36 @@ recreating bot 003 again.
 
 The visual Discord cut/miss interaction remains a user-facing smoke check. The
 database, external ports, and Tailscale were not changed.
+
+## Revision 3 production rollout evidence
+
+The owner approved Revision 3 implementation, direct execution, deployment,
+and the required bot recreations on 2026-08-02.
+
+- Implementation commit `8d7dbf5` enabled the selected Edge voice for bots
+  001-004. Documentation commit `f72bfd1` was the source deployed to the new
+  containers.
+- The immediately preceding W10 image was preserved as
+  `dodol-bot:rollback-w10-5c67dd7`; the older
+  `dodol-bot:rollback-a93f607` recovery point was also retained.
+- The shared production image built successfully, and bots 004, 001, and 002
+  were force-recreated one at a time in that order. Each gate completed before
+  the next bot was changed.
+- Bot 003 was already healthy on W10 commit `5c67dd7`, so it was deliberately
+  left running without another recreation. Its live runtime still resolved to
+  Edge `ko-KR-SunHiNeural`, `+8%`, and `+8Hz`.
+- The recreated 004, 001, and 002 containers each reported commit `f72bfd1`,
+  Discord online, scheduler recovery complete, and their independent web
+  bridge socket ready.
+- Direct production-container synthesis for bots 004, 001, and 002 resolved to
+  Edge `ko-KR-SunHiNeural`, `+8%`, and `+8Hz`, produced a 17,712-byte MP3, and
+  removed the temporary file immediately.
+- Bot 001 reconnected to its configured voice channel and production logs
+  recorded Edge synthesis and playback. Bots 002 and 004 intentionally remain
+  without voice-channel playback until an administrator assigns a channel.
+- All four containers were up after the rollout. All four bridge sockets were
+  present independently with mode `660` and the expected shared group, and the
+  post-rollout logs showed no startup or restart-loop failure.
+
+No production database, Discord channel configuration, external port, or
+Tailscale setting changed during Revision 3.
