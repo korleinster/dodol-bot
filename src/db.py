@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS web_broadcast_event (
     embeds_json      TEXT    NOT NULL DEFAULT '[]',
     attachments_json TEXT    NOT NULL DEFAULT '[]',
     components_json  TEXT    NOT NULL DEFAULT '[]',
+    event_type       TEXT    NOT NULL DEFAULT 'generic',
+    boss_name        TEXT,
     created_at       INTEGER NOT NULL
 );
 
@@ -215,6 +217,8 @@ async def init_db() -> None:
             "ALTER TABLE contributions ADD COLUMN actor_type TEXT NOT NULL DEFAULT 'discord'",
             "ALTER TABLE contributions ADD COLUMN actor_ref TEXT",
             "ALTER TABLE web_broadcast_event ADD COLUMN bot_number INTEGER NOT NULL DEFAULT 3",
+            "ALTER TABLE web_broadcast_event ADD COLUMN event_type TEXT NOT NULL DEFAULT 'generic'",
+            "ALTER TABLE web_broadcast_event ADD COLUMN boss_name TEXT",
             "ALTER TABLE component_action_claim ADD COLUMN bot_number INTEGER NOT NULL DEFAULT 3",
         ]:
             try:
@@ -332,6 +336,8 @@ async def append_web_broadcast_event(
     embeds: list[dict],
     attachments: list[dict],
     components: list[dict],
+    event_type: str = "generic",
+    boss_name: str | None = None,
     created_at: int | None = None,
 ) -> int:
     """Persist one bot-scoped broadcast event and return its stable cursor.
@@ -343,6 +349,9 @@ async def append_web_broadcast_event(
     bot_number = _validate_bridge_bot_number(bot_number)
     if kind not in {"message", "message_update", "message_delete"}:
         raise ValueError("invalid broadcast event kind")
+    if event_type not in {"generic", "boss_warning_5m", "boss_warning_1m", "boss_spawn", "reservation"}:
+        raise ValueError("invalid broadcast event type")
+    boss_name = boss_name.strip()[:100] if isinstance(boss_name, str) and boss_name.strip() else None
     created_at = int(created_at if created_at is not None else time.time() * 1000)
     stored_event_key = _scoped_bridge_key(bot_number, event_key)
     async with get_db() as db:
@@ -366,8 +375,8 @@ async def append_web_broadcast_event(
         await db.execute(
             """INSERT OR IGNORE INTO web_broadcast_event
                (event_key, bot_number, guild_id, channel_id, message_id, kind, content,
-                embeds_json, attachments_json, components_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                embeds_json, attachments_json, components_json, event_type, boss_name, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 stored_event_key,
                 bot_number,
@@ -379,6 +388,8 @@ async def append_web_broadcast_event(
                 _broadcast_json(embeds),
                 _broadcast_json(attachments),
                 _broadcast_json(components),
+                event_type,
+                boss_name,
                 created_at,
             ),
         )
@@ -462,6 +473,8 @@ async def list_web_broadcast_events(
             "embeds": _decode_broadcast_json(row["embeds_json"], []),
             "attachments": _decode_broadcast_json(row["attachments_json"], []),
             "components": _decode_broadcast_json(row["components_json"], []),
+            "eventType": row["event_type"],
+            "bossName": row["boss_name"],
             "createdAt": int(row["created_at"]),
         }
         for row in rows

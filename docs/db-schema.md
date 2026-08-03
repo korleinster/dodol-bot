@@ -109,6 +109,21 @@ INSERT (notified=0, warned_5min=0, warned_1min=0)
 
 ---
 
+## web_broadcast_event (additive)
+
+The append-only web mirror is isolated by `bot_number + guild_id`.
+
+| Column | Type | Description |
+|---|---|---|
+| `event_type` | TEXT | `generic`, `boss_warning_5m`, `boss_warning_1m`, `boss_spawn`, or `reservation` |
+| `boss_name` | TEXT | Bounded boss name for structured boss events; otherwise NULL |
+
+These fields support Web Push filtering without changing Discord message
+content. Existing rows migrate to `event_type='generic'`; they remain visible
+in the normal web feed but are never treated as push-worthy boss events.
+
+---
+
 ## M44 component action claims (additive)
 
 The component-action dispatcher uses a separate idempotency record so a web

@@ -678,6 +678,25 @@ tail -20 ~/dodol-bot/backups/backup.log
 
 > Timezone: KST (UTC+9) — configured via `timedatectl set-timezone Asia/Seoul`.
 
+### Structured Web Notifications
+
+Each enabled bot mirrors its own configured Discord channel through its
+authenticated Unix-socket bridge. Broadcast rows are isolated by bot and
+guild. Scheduler messages additionally expose a bounded structured type:
+
+- `boss_warning_5m`
+- `boss_warning_1m`
+- `boss_spawn`
+- `reservation`
+- `generic`
+
+Only the first three boss types are eligible for LeinyGames Web Push. Generic
+bot speech, human conversation, other bots, and arbitrary reservations remain
+ineligible. Exact non-fixed spawn messages retain their registered cut/miss
+components so the web service can invoke the same dispatcher and durable claim
+used by Discord. A bridge capture failure is best-effort and never interrupts
+Discord delivery or the scheduler.
+
 ---
 
 ## Project Structure
