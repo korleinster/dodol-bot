@@ -31,6 +31,7 @@ from src.web_bridge import (
     MAX_BOT_DISPLAY_NAME,
     WebBridge,
     _actor_id,
+    _broadcast_event_metadata,
     _is_tts_command,
     _safe_bot_display_name,
     start_web_bridge,
@@ -38,6 +39,21 @@ from src.web_bridge import (
 
 
 class WebBridgePolicyTest(unittest.TestCase):
+    def test_scheduler_broadcasts_have_structured_boss_metadata(self):
+        cases = [
+            ("⏰ 5분 후 출현", "boss_warning_5m"),
+            ("⚠️ 1분 후 출현", "boss_warning_1m"),
+            ("⚔️ 보스 출현!", "boss_spawn"),
+            ("⏰ 예약 알림", "reservation"),
+        ]
+        for title, expected in cases:
+            with self.subTest(title=title):
+                event_type, boss_name = _broadcast_event_metadata([
+                    {"title": title, "description": "**안타라스** — 곧 출현"},
+                ])
+                self.assertEqual(event_type, expected)
+                self.assertEqual(boss_name, "안타라스" if expected.startswith("boss_") else None)
+
     def test_web_actor_id_is_stable_and_never_a_discord_snowflake(self):
         self.assertLess(_actor_id("profile:session"), 0)
         self.assertEqual(_actor_id("profile:session"), _actor_id("profile:session"))
@@ -390,6 +406,19 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["content"], "수정됨")
         self.assertIsNone(events[2]["content"])
         self.assertEqual(events[2]["embeds"], [])
+
+    async def test_boss_spawn_metadata_is_persisted_for_web_push(self):
+        message = _FakeMessage(
+            message_id=11,
+            embeds=[_FakeEmbed({
+                "title": "⚔️ 보스 출현!",
+                "description": "**안타라스** — 출현",
+            })],
+        )
+        await self.bridge._on_broadcast_message(message)
+        events, _ = await db_module.list_web_broadcast_events(guild_id=100)
+        self.assertEqual(events[0]["eventType"], "boss_spawn")
+        self.assertEqual(events[0]["bossName"], "안타라스")
 
     async def test_raw_delete_only_tombstones_a_previously_mirrored_bot_message(self):
         await self.bridge._on_raw_broadcast_message_delete(

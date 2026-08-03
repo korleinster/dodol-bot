@@ -170,6 +170,28 @@ def _message_content(message: discord.Message) -> str:
     return str(content)
 
 
+def _broadcast_event_metadata(embeds: list[dict[str, Any]]) -> tuple[str, str | None]:
+    """Classify scheduler messages without changing their public Discord text."""
+    first = embeds[0] if embeds else {}
+    title = str(first.get("title") or "")
+    description = str(first.get("description") or "")
+    event_type = "generic"
+    if "5분 후 출현" in title:
+        event_type = "boss_warning_5m"
+    elif "1분 후 출현" in title:
+        event_type = "boss_warning_1m"
+    elif "보스 출현" in title:
+        event_type = "boss_spawn"
+    elif "예약 알림" in title:
+        event_type = "reservation"
+    boss_name = None
+    if event_type.startswith("boss_"):
+        match = re.search(r"\*\*([^*\r\n]{1,100})\*\*", description)
+        if match:
+            boss_name = unicodedata.normalize("NFKC", match.group(1)).strip()[:100] or None
+    return event_type, boss_name
+
+
 def _safe_bot_display_name(value: Any) -> str | None:
     """Return a bounded plain-text bot label safe for downstream consumers."""
     if not isinstance(value, str):
@@ -516,6 +538,7 @@ class WebBridge:
         embeds = _message_embeds(message)
         attachments = _message_attachments(message)
         components = _message_components(message)
+        event_type, boss_name = _broadcast_event_metadata(embeds)
         await append_web_broadcast_event(
             event_key=_event_key(
                 message_id=message_id,
@@ -535,6 +558,8 @@ class WebBridge:
             embeds=embeds,
             attachments=attachments,
             components=components,
+            event_type=event_type,
+            boss_name=boss_name,
         )
 
     async def _capture_broadcast(self, message: discord.Message, kind: str) -> None:
