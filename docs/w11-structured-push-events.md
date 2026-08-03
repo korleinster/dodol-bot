@@ -28,3 +28,24 @@ Rollout uses the established `004 → 001 → 002 → 003` order. A bridge or
 classification failure must not interrupt Discord login, scheduler ticks,
 messages, TTS, or sibling bots. Stop and roll back only the failed bot before
 continuing.
+
+## Production rollout
+
+Production rollout completed on 2026-08-03 at commit `1b32a2c`.
+
+- The no-cache image build and secret-absence inspection passed.
+- Containers were recreated in `004 → 001 → 002 → 003` order. At each gate,
+  only the target container ID changed and all siblings stayed online.
+- All four containers run image
+  `sha256:0e7b29717f1011e2cb12179989c8af98d9f986ade49e9992dcd42c47b5c43d76`.
+- Every bot reported the expected startup commit, a mode-660 per-bot Unix
+  socket, signed bridge health `ok`, scheduler state `ready`, and one configured
+  target.
+- Bot 003 retained Edge TTS with `ko-KR-SunHiNeural`, `+8%` rate, and `+8Hz`
+  pitch after recreation.
+- The unreferenced W10 rollback image and 91.54MB of unused build cache were
+  removed without deleting containers or database data.
+
+Installed-iPhone and desktop push delivery remain owner-device acceptance
+checks because they require an authenticated guest session and notification
+permission. They must not be simulated with forged credentials.
