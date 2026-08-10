@@ -34,12 +34,13 @@ async def send_telegram(text: str) -> None:
 
 
 async def send_discord_alert(bot: commands.Bot, bot_number: int, text: str) -> None:
-    """해당 봇 번호의 모든 Discord 채널에 경고 메시지 발송."""
+    """Send an operational alert only to currently active text bindings."""
     from src.db import get_db
     try:
         async with get_db() as db:
             async with db.execute(
-                "SELECT text_channel_id FROM guild_config WHERE bot_number=?",
+                """SELECT DISTINCT text_channel_id FROM guild_config
+                   WHERE bot_number=? AND text_channel_id IS NOT NULL""",
                 (bot_number,),
             ) as cur:
                 rows = await cur.fetchall()

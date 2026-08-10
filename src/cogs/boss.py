@@ -32,6 +32,9 @@ SPAWN_KW = {"젠", "스폰", "spawn", "ㅈ"}
 # request and a duplicate boss/TTS alert is worse than an observable unknown.
 SCHEDULER_DELIVERY_RETRY_DELAYS = (5, 15, 30, 60, 120)
 SCHEDULER_DELIVERY_MAX_RETRIES = len(SCHEDULER_DELIVERY_RETRY_DELAYS)
+# Do not close an incident on one lucky 1-second tick. This prevents an
+# intermittent upstream failure from reopening and notifying every few seconds.
+SCHEDULER_RECOVERY_SUCCESS_TICKS = 30
 
 
 def scheduler_delivery_retry_delay(attempt: int) -> int:
@@ -219,6 +222,7 @@ class Boss(commands.Cog):
         self.bn  = bot.bot_number
         self._scheduler_error_key: str | None = None
         self._scheduler_error_reported_at = 0.0
+        self._scheduler_success_streak = 0
         self._scheduler_bootstrapped = False
         self.check_schedules.start()
         self.cleanup_old_schedules.start()
@@ -239,28 +243,51 @@ class Boss(commands.Cog):
             self.bot.scheduler_health = health
         return health
 
-    def _mark_scheduler_ready(self, *, bootstrap: bool = False) -> None:
+    async def _mark_scheduler_ready(self, *, bootstrap: bool = False) -> None:
         timestamp = int(time.time() * 1000)
         health = self._scheduler_health()
         was_failed = health.get("status") == "failed"
-        health["errorCode"] = None
         if bootstrap:
             # Recovery is complete, but the first real notification tick still
             # has to succeed before the scheduler can truthfully report ready.
-            health["status"] = "starting"
             health["bootstrapCompletedAt"] = timestamp
             health["lastTickAt"] = None
             if was_failed:
-                self._scheduler_error_key = None
-                self._scheduler_error_reported_at = 0.0
+                self._scheduler_success_streak = 0
+            else:
+                health["status"] = "starting"
+                health["errorCode"] = None
+            return
+
+        health["lastTickAt"] = timestamp
+        if was_failed:
+            self._scheduler_success_streak += 1
+            if self._scheduler_success_streak < SCHEDULER_RECOVERY_SUCCESS_TICKS:
+                return
+
+            recovered_error = self._scheduler_error_key or health.get("errorCode")
+            health["status"] = "ready"
+            health["errorCode"] = None
+            self._scheduler_error_key = None
+            self._scheduler_error_reported_at = 0.0
+            self._scheduler_success_streak = 0
+            from src.utils.notify import alert
+            try:
+                await alert(
+                    self.bot,
+                    self.bn,
+                    "보스 알림 스케줄러가 정상 복구되었습니다"
+                    f" ({recovered_error or 'SCHEDULER_RECOVERED'}).",
+                )
+            except Exception as alert_error:
+                print(
+                    f"[뚠뚠봇{self.bn:03d}] 복구 알림 전송 실패 "
+                    f"(SCHEDULER_RECOVERY_ALERT_FAILED, {type(alert_error).__name__})"
+                )
         else:
             health["status"] = "ready"
-            health["lastTickAt"] = timestamp
-            if was_failed:
-                # A successful tick closes the incident. The same error in a
-                # later failed tick is a new outage and deserves one new alert.
-                self._scheduler_error_key = None
-                self._scheduler_error_reported_at = 0.0
+            health["errorCode"] = None
+            self._scheduler_success_streak = 0
 
     async def _mark_scheduler_failed(
         self,
@@ -270,20 +297,18 @@ class Boss(commands.Cog):
         context: str,
     ) -> None:
         health = self._scheduler_health()
+        incident_is_open = self._scheduler_error_key is not None
         health["status"] = "failed"
         health["errorCode"] = error_code
+        self._scheduler_success_streak = 0
 
-        # 1초 루프에서 같은 장애가 반복되어도 Discord/Telegram을 도배하지 않는다.
-        error_key = error_code
-        current = time.monotonic()
-        if (
-            error_key == self._scheduler_error_key
-            and current - self._scheduler_error_reported_at < 300
-        ):
+        # A continuous incident gets one opening alert, regardless of how its
+        # exception type fluctuates. Thirty successful ticks close it later.
+        if incident_is_open:
             return
 
-        self._scheduler_error_key = error_key
-        self._scheduler_error_reported_at = current
+        self._scheduler_error_key = error_code
+        self._scheduler_error_reported_at = time.monotonic()
         print(
             f"[뚠뚠봇{self.bn:03d}] {context} "
             f"({error_code}, {type(error).__name__})"
@@ -1215,7 +1240,7 @@ class Boss(commands.Cog):
             return False
 
         self._scheduler_bootstrapped = True
-        self._mark_scheduler_ready(bootstrap=True)
+        await self._mark_scheduler_ready(bootstrap=True)
         print(
             f"[뚠뚠봇{self.bn:03d}] 재시작 복구 완료 — "
             f"과거 {stats['expired']}건 정리, 일반 {stats['normalCreated']}건·"
@@ -1229,7 +1254,7 @@ class Boss(commands.Cog):
             return
         try:
             await self._check_schedules_inner()
-            self._mark_scheduler_ready()
+            await self._mark_scheduler_ready()
         except Exception as e:
             await self._mark_scheduler_failed(
                 "SCHEDULER_TICK_FAILED",

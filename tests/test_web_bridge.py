@@ -33,12 +33,20 @@ from src.web_bridge import (
     _actor_id,
     _broadcast_event_metadata,
     _is_tts_command,
+    _plain_web_mirror,
     _safe_bot_display_name,
     start_web_bridge,
 )
 
 
 class WebBridgePolicyTest(unittest.TestCase):
+    def test_web_commands_are_plain_text_without_origin_badge_or_code_fence(self):
+        self.assertEqual(_plain_web_mirror("테스터", "ㅋ"), "테스터: ㅋ")
+        rendered = _plain_web_mirror("**관리자**", "```위장```")
+        self.assertNotIn("웹 ·", rendered)
+        self.assertNotIn("```", rendered)
+        self.assertIn("관리자", rendered)
+
     def test_scheduler_broadcasts_have_structured_boss_metadata(self):
         cases = [
             ("⏰ 5분 후 출현", "boss_warning_5m"),
@@ -318,6 +326,10 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
                 (101, 3, 201),
             )
             await db.execute(
+                "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?, ?, NULL)",
+                (102, 3),
+            )
+            await db.execute(
                 """INSERT INTO guild_config
                    (guild_id, bot_number, text_channel_id, voice_channel_id)
                    VALUES (?, ?, ?, ?)""",
@@ -556,6 +568,7 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
         response = await self.bridge.targets(SimpleNamespace())
         payload = json.loads(response.body)
         targets = {item["guildId"]: item for item in payload["targets"]}
+        self.assertNotIn("102", targets)
         self.assertFalse(targets["100"]["capabilities"]["tts"])
         self.assertFalse(targets["101"]["capabilities"]["tts"])
         self.assertTrue(targets["100"]["capabilities"]["commands"])
@@ -599,7 +612,7 @@ class WebBroadcastBridgeTest(unittest.IsolatedAsyncioTestCase):
         await self.bridge.component_actions(SimpleNamespace())
 
         actor = self.bridge.component_dispatcher.dispatch.await_args.kwargs["actor"]
-        self.assertEqual(actor.display_name, "웹 · 관리자")
+        self.assertEqual(actor.display_name, "관리자")
 
     async def test_tts_without_voice_is_rejected_before_job_or_queue_creation(self):
         self.bridge._json = AsyncMock(return_value={

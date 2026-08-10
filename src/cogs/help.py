@@ -14,9 +14,13 @@ def _build_embeds(bn: int) -> list[discord.Embed]:
     e = discord.Embed(title="⚙️ 채널 설정", color=0x5865F2)
     e.add_field(name="​", value=(
         "`소환` — 서버 내 모든 뚠뚠봇 배치 현황\n"
-        "`소환 뚠뚠봇001` — 이 채널에 배치\n"
+        "`소환 뚠뚠봇001` — 이 서버와 채널로 이동 (서버 관리자)\n"
         "　　음성방 입장 상태로 소환하면 음성 채널도 자동 연결\n"
-        "`설정` — 현재 설정 확인"
+        "`설정` — 현재 설정 확인 (배치된 채팅 채널에서만 동작)\n"
+        "`음성나가기` — 음성 채널 연결만 해제\n"
+        "`채팅나가기` — 채팅 채널 연결만 해제\n"
+        "`전체나가기` — 음성·채팅 연결 모두 해제\n"
+        "　　나가기와 서버 이동은 보스·예약·기여 데이터를 삭제하지 않음"
     ), inline=False)
     embeds.append(e)
 
@@ -137,7 +141,7 @@ def _build_embeds(bn: int) -> list[discord.Embed]:
     # ── TTS ──────────────────────────────────────────────
     e = discord.Embed(title="🔊 TTS", color=0x5865F2)
     e.add_field(name="​", value=(
-        "`v 텍스트` / `ㅍ 텍스트` — 음성 채널에서 읽어줌 (Google TTS)\n"
+        "`v 텍스트` / `ㅍ 텍스트` — 음성 채널에서 읽어줌\n"
         "　　정각 알림 시 보스명 + 남은시간 자동 읽기\n"
         "`정신차려` / `재시작` — 봇 프로세스 전체 재시작"
     ), inline=False)

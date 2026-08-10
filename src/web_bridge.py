@@ -96,6 +96,13 @@ def _actor_id(actor_ref: str) -> int:
     return -(value or 1)
 
 
+def _plain_web_mirror(nickname: str, command: str) -> str:
+    """Render a mention-safe, non-code-block command for Discord."""
+    safe_name = discord.utils.escape_markdown(nickname.strip())
+    safe_command = discord.utils.escape_markdown(command[:1600])
+    return f"{safe_name}: {safe_command}"
+
+
 def _embed_json(embed: discord.Embed | None) -> dict[str, Any] | None:
     if embed is None:
         return None
@@ -282,7 +289,9 @@ class WebActor:
         self.id = _actor_id(actor_ref)
         self.actor_ref = actor_ref
         self.actor_type = "web_guest"
-        self.name = f"웹 · {nickname}"
+        # actor_type remains the authoritative audit identity. Public Discord
+        # messages use the nickname without a noisy web-origin badge.
+        self.name = nickname
         self.display_name = self.name
         self.mention = self.name
         self.bot = False
@@ -413,7 +422,9 @@ class WebBridge:
         await self._authenticate(request)
         async with get_db() as db:
             async with db.execute(
-                "SELECT guild_id, text_channel_id, voice_channel_id FROM guild_config WHERE bot_number=?",
+                """SELECT guild_id, text_channel_id, voice_channel_id
+                   FROM guild_config
+                   WHERE bot_number=? AND text_channel_id IS NOT NULL""",
                 (self.bot.bot_number,),
             ) as cur:
                 rows = await cur.fetchall()
@@ -810,11 +821,8 @@ class WebBridge:
                 raise RuntimeError("configured Discord channel is unavailable")
 
             actor = WebActor(job.actor_ref, nickname)
-            mirror_command = job.command.replace("```", "``\u200b`")
-            if len(mirror_command) > 1600:
-                mirror_command = f"{mirror_command[:1600]}…"
             await channel.send(
-                f"🌐 **{actor.display_name}**\n```\n{mirror_command}\n```",
+                _plain_web_mirror(actor.display_name, job.command),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             capture = CaptureChannel(channel, job)

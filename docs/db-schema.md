@@ -18,7 +18,11 @@ audits, and component claims to bot numbers 001–004.
 | `voice_channel_id` | INTEGER | TTS 음성 채널 ID (없으면 NULL) |
 
 - PK: `(guild_id, bot_number)`
-- `소환 도돌봇001` 명령 시 UPSERT
+- `소환 뚠뚠봇001` 명령 시 대상 서버를 UPSERT하고 다른 서버의 같은
+  봇 채널 ID를 NULL로 만든다.
+- 서버 이동 시 `bosses`, `schedules`, `contributions`의 길드 연결을 한
+  트랜잭션에서 대상 서버로 변경한다. 대상에 기존 데이터가 있으면 롤백한다.
+- 나가기 명령은 채널 ID만 NULL로 만들고 다른 테이블을 삭제하지 않는다.
 
 ---
 

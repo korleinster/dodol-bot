@@ -125,16 +125,26 @@ PLAYNC API keys are issued at [PLAYNC Developer Center](https://developers.playn
 
 ## Deploying the Bot
 
-When you first add the bot to a server, deploy it with the `소환 뚠뚠봇001` command in any channel.
+When you first add the bot to a server, a server administrator deploys it with
+the `소환 뚠뚠봇001` command in any channel. Repeating the targeted summon in a
+different server moves that bot's one active binding and its boss, schedule,
+and contribution data without resetting them.
 
 ```
 소환                ← Check deployment status of all Dodol Bot instances on the server
 소환 뚠뚠봇001      ← Deploy Dodol Bot 001 to current text + voice channel
 설정                ← Check this bot's current channel assignment
+음성나가기          ← Leave only the assigned voice channel
+채팅나가기          ← Leave only the assigned text channel
+전체나가기          ← Leave both channels
 ```
 
 - The voice channel is automatically set to the voice room the user is **currently in** when the command is issued.
 - After deployment, commands only work in the configured text channel.
+- `설정` is silent outside that text channel. Summon and leave mutations require
+  Discord server-management permission.
+- Leave commands clear only channel bindings. They never delete bosses,
+  schedules, contributions, or historical audit rows.
 
 ## Multi-Bot Web Bridge
 
@@ -214,7 +224,15 @@ with the safe reason.
 Bridge target responses also expose a detail-free scheduler status with
 `starting`, `ready`, or `failed`, the bootstrap and latest successful tick
 timestamps, and a bounded error code. Exception text and tracebacks are never
-returned.
+returned. One continuous scheduler incident produces one failure alert. It is
+closed only after 30 consecutive successful ticks, followed by one recovery
+alert, so intermittent upstream failures do not create alert storms.
+
+Web-originated commands are mirrored to Discord as escaped plain text in the
+form `nickname: command`. They are not wrapped in a code block and do not add a
+public web-origin badge. The internal actor type and stable actor reference
+remain available for authorization and audit, and Discord mentions stay
+disabled.
 
 Discord startup uses the explicit `login → load cogs → start bridge → connect`
 sequence. An optional bridge startup failure does not stop Discord commands or
@@ -265,8 +283,11 @@ Commands are entered directly without any prefix.
 | Command | Description |
 |---|---|
 | `소환` | View all Dodol Bot deployments on the server |
-| `소환 뚠뚠봇001` | Deploy Dodol Bot 001 to current channel |
-| `설정` | Check current bot channel configuration |
+| `소환 뚠뚠봇001` | Move Dodol Bot 001 and its live data to the current server/channel (server administrator) |
+| `설정` | Check configuration in this bot's assigned text channel |
+| `음성나가기` | Clear and disconnect the voice binding without deleting data |
+| `채팅나가기` | Clear the text binding without deleting data |
+| `전체나가기` | Clear both bindings without deleting data |
 
 ---
 
@@ -537,7 +558,8 @@ DISCORD_TOKEN_004=token_for_bot_004
 ```
 
 - Instances are created only for token numbers that are set (001–009 supported).
-- Each bot has independent channel/boss/reservation data per server.
+- Each bot has one active server/channel binding. A cross-server summon moves
+  its boss, reservation, and contribution data transactionally.
 - Running multiple bots on the same server allows management separated by channel.
 
 ---
@@ -565,7 +587,8 @@ The bot automatically sends Telegram notifications for operational events:
 | ✅ Deployment start | ✅ | ✅ |
 | ⚠️ Error restart (Docker restart policy) | ✅ | ✅ |
 | 🔄 Network reconnection (WebSocket drop) | ✅ | ❌ (noise prevention) |
-| ⚠️ `check_schedules` loop exception (loop kept alive) | ✅ | ✅ |
+| ⚠️ `check_schedules` incident opens (loop kept alive) | ✅ once | ✅ once |
+| ✅ 30 consecutive scheduler ticks recover an incident | ✅ once | ✅ once |
 | ⚠️ `check_schedules` loop crash + restart | ✅ | ✅ |
 
 Restart type is detected via `/tmp` marker file and `on_ready` call count:

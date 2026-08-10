@@ -21,7 +21,12 @@ if "gtts" not in sys.modules:
 
 from src import db as db_module
 from src.cogs import boss as boss_module
-from src.cogs.boss import Boss, format_schedule_tts, scheduler_delivery_retry_delay
+from src.cogs.boss import (
+    Boss,
+    SCHEDULER_RECOVERY_SUCCESS_TICKS,
+    format_schedule_tts,
+    scheduler_delivery_retry_delay,
+)
 from src.web_bridge import WebBridge, _scheduler_health_payload
 
 
@@ -39,6 +44,7 @@ def _bare_boss(bot_number=3):
     cog.bn = bot_number
     cog._scheduler_error_key = None
     cog._scheduler_error_reported_at = 0.0
+    cog._scheduler_success_streak = 0
     cog._scheduler_bootstrapped = False
     return cog
 
@@ -223,22 +229,28 @@ class SchedulerRecoveryTest(unittest.IsolatedAsyncioTestCase):
                 "SCHEDULER_TICK_FAILED",
             )
 
-            cog._mark_scheduler_ready(bootstrap=True)
-            self.assertEqual(cog.bot.scheduler_health["status"], "starting")
+            await cog._mark_scheduler_ready(bootstrap=True)
+            self.assertEqual(cog.bot.scheduler_health["status"], "failed")
             self.assertIsNotNone(
                 cog.bot.scheduler_health["bootstrapCompletedAt"],
             )
-            cog._mark_scheduler_ready()
+            for _ in range(SCHEDULER_RECOVERY_SUCCESS_TICKS - 1):
+                await cog._mark_scheduler_ready()
+            self.assertEqual(cog.bot.scheduler_health["status"], "failed")
+            self.assertEqual(alert.await_count, 1)
+
+            await cog._mark_scheduler_ready()
             self.assertEqual(cog.bot.scheduler_health["status"], "ready")
             self.assertIsNone(cog.bot.scheduler_health["errorCode"])
             self.assertIsNotNone(cog.bot.scheduler_health["lastTickAt"])
+            self.assertEqual(alert.await_count, 2)
 
             await cog._mark_scheduler_failed(
                 "SCHEDULER_TICK_FAILED",
                 RuntimeError("new incident"),
                 context="실행 실패",
             )
-            self.assertEqual(alert.await_count, 2)
+            self.assertEqual(alert.await_count, 3)
 
     async def test_bootstrap_failure_retries_without_stopping_loop(self):
         cog = _bare_boss()
@@ -261,7 +273,7 @@ class SchedulerRecoveryTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(await cog._bootstrap_scheduler())
             self.assertTrue(cog._scheduler_bootstrapped)
-            self.assertEqual(cog.bot.scheduler_health["status"], "starting")
+            self.assertEqual(cog.bot.scheduler_health["status"], "failed")
             self.assertEqual(alert.await_count, 1)
 
     async def test_monitoring_failure_does_not_break_scheduler_error_path(self):
