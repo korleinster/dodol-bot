@@ -26,6 +26,19 @@ CUT_KW   = {"컷", "ㅋ", "cut"}
 MISS_KW  = {"멍", "ㅁ"}
 SPAWN_KW = {"젠", "스폰", "spawn", "ㅈ"}
 
+# DiscordServerError is an explicit 5xx response: Discord did not accept the
+# message, so the scheduler can safely retry. Timeouts and transport failures
+# are intentionally not retried because Discord may already have accepted the
+# request and a duplicate boss/TTS alert is worse than an observable unknown.
+SCHEDULER_DELIVERY_RETRY_DELAYS = (5, 15, 30, 60, 120)
+SCHEDULER_DELIVERY_MAX_RETRIES = len(SCHEDULER_DELIVERY_RETRY_DELAYS)
+
+
+def scheduler_delivery_retry_delay(attempt: int) -> int:
+    """Return the bounded retry delay for a 1-based Discord 5xx attempt."""
+    index = max(0, min(int(attempt) - 1, len(SCHEDULER_DELIVERY_RETRY_DELAYS) - 1))
+    return SCHEDULER_DELIVERY_RETRY_DELAYS[index]
+
 
 # ── 시간 파싱 헬퍼 ────────────────────────────────────────────────────────────
 
@@ -289,6 +302,109 @@ class Boss(commands.Cog):
                 f"[뚠뚠봇{self.bn:03d}] 운영 알림 전송 실패 "
                 f"(SCHEDULER_ALERT_FAILED, {type(alert_error).__name__})"
             )
+
+    async def _clear_scheduler_delivery_error(self, schedule_id: int) -> None:
+        async with get_db() as db:
+            await db.execute(
+                """UPDATE schedules
+                   SET delivery_retry_after=NULL,
+                       delivery_retry_count=0,
+                       delivery_error_code=NULL
+                   WHERE id=?""",
+                (schedule_id,),
+            )
+            await db.commit()
+
+    async def _record_scheduler_delivery_uncertain(
+        self,
+        schedule_id: int,
+        error: Exception,
+    ) -> None:
+        """Record a non-retryable send failure without risking a duplicate."""
+        async with get_db() as db:
+            await db.execute(
+                """UPDATE schedules
+                   SET delivery_retry_after=NULL,
+                       delivery_error_code='DISCORD_DELIVERY_UNCERTAIN'
+                   WHERE id=?""",
+                (schedule_id,),
+            )
+            await db.commit()
+        print(
+            f"[뚠뚠봇{self.bn:03d}] 보스 알림 전송 결과 불확실 "
+            f"(SCHEDULER_DELIVERY_UNCERTAIN, "
+            f"type={type(error).__name__}, "
+            f"status={getattr(error, 'status', 'unknown')})"
+        )
+
+    async def _retry_scheduler_delivery(
+        self,
+        schedule_id: int,
+        stage: str,
+        error: Exception,
+    ) -> bool:
+        """Release a known Discord 5xx claim for bounded, durable retry.
+
+        A claim remains final for ambiguous failures. This method is invoked
+        only for ``discord.DiscordServerError``, where Discord explicitly
+        rejected the request and retrying cannot duplicate an accepted alert.
+        """
+        release_sql = {
+            "5m": "warned_5min=0",
+            "1m": "warned_1min=0",
+            # Final alerts keep the warning markers, but must become pending
+            # again so the same schedule can be retried without creating a
+            # duplicate auto-miss reservation.
+            "spawn": "notified=0",
+        }[stage]
+
+        async with get_db() as db:
+            async with db.execute(
+                "SELECT delivery_retry_count FROM schedules WHERE id=?",
+                (schedule_id,),
+            ) as cur:
+                row = await cur.fetchone()
+            if row is None:
+                return False
+
+            attempt = int(row[0] or 0) + 1
+            if attempt > SCHEDULER_DELIVERY_MAX_RETRIES:
+                await db.execute(
+                    """UPDATE schedules
+                       SET delivery_retry_after=NULL,
+                           delivery_retry_count=?,
+                           delivery_error_code='DISCORD_SERVER_ERROR_EXHAUSTED'
+                       WHERE id=?""",
+                    (attempt, schedule_id),
+                )
+                await db.commit()
+                print(
+                    f"[뚠뚠봇{self.bn:03d}] 보스 알림 재시도 한도 도달 "
+                    f"(SCHEDULER_DELIVERY_RETRY_EXHAUSTED, stage={stage}, "
+                    f"attempt={attempt}, status={getattr(error, 'status', 'unknown')})"
+                )
+                return False
+
+            delay = scheduler_delivery_retry_delay(attempt)
+            retry_after = now() + timedelta(seconds=delay)
+            await db.execute(
+                f"""UPDATE schedules
+                   SET {release_sql},
+                       delivery_retry_after=?,
+                       delivery_retry_count=?,
+                       delivery_error_code='DISCORD_SERVER_ERROR'
+                   WHERE id=?""",
+                (retry_after.isoformat(), attempt, schedule_id),
+            )
+            await db.commit()
+
+        print(
+            f"[뚠뚠봇{self.bn:03d}] 보스 알림 Discord 5xx 재시도 예약 "
+            f"(SCHEDULER_DELIVERY_RETRY, stage={stage}, attempt={attempt}, "
+            f"retry_after={retry_after.isoformat()}, "
+            f"status={getattr(error, 'status', 'unknown')})"
+        )
+        return True
 
     # ── 채널 가드 ─────────────────────────────────────────
 
@@ -1140,12 +1256,16 @@ class Boss(commands.Cog):
 
         async def fetch(where: str, params: tuple) -> list[dict]:
             async with get_db() as db:
-                async with db.execute(base + where, (self.bn,) + params) as cur:
+                async with db.execute(
+                    base + where + " AND (s.delivery_retry_after IS NULL OR s.delivery_retry_after <= ?)",
+                    (self.bn,) + params + (n.isoformat(),),
+                ) as cur:
                     return [dict(r) async for r in cur]
 
         rows_5min  = await fetch(" AND s.warned_5min=0 AND s.scheduled_at > ? AND s.scheduled_at <= ?", (t90, t330))
         rows_1min  = await fetch(" AND s.warned_1min=0 AND s.scheduled_at > ? AND s.scheduled_at <= ?", (t2,  t90))
         rows_final = await fetch(" AND s.scheduled_at <= ?",                                             (t2,))
+        delivery_errors: list[Exception] = []
 
         # ── 5분 전 경고 ───────────────────────────────────
         for r in rows_5min:
@@ -1155,8 +1275,9 @@ class Boss(commands.Cog):
             async with get_db() as db:
                 claimed = await db.execute(
                     """UPDATE schedules SET warned_5min=1
-                       WHERE id=? AND notified=0 AND warned_5min=0""",
-                    (r["id"],),
+                       WHERE id=? AND notified=0 AND warned_5min=0
+                         AND (delivery_retry_after IS NULL OR delivery_retry_after <= ?)""",
+                    (r["id"], n.isoformat()),
                 )
                 await db.commit()
                 if claimed.rowcount != 1:
@@ -1168,7 +1289,16 @@ class Boss(commands.Cog):
                 description=f"**{r['content']}**{miss_str}  — {fmt_remain(at - n)}",
                 color=0xFEE75C,
             )
-            await channel.send(embed=embed)
+            try:
+                await channel.send(embed=embed)
+            except discord.DiscordServerError as error:
+                await self._retry_scheduler_delivery(r["id"], "5m", error)
+                delivery_errors.append(error)
+                continue
+            except Exception as error:
+                await self._record_scheduler_delivery_uncertain(r["id"], error)
+                raise
+            await self._clear_scheduler_delivery_error(r["id"])
 
         # ── 1분 전 경고 ───────────────────────────────────
         for r in rows_1min:
@@ -1178,8 +1308,9 @@ class Boss(commands.Cog):
             async with get_db() as db:
                 claimed = await db.execute(
                     """UPDATE schedules SET warned_5min=1, warned_1min=1
-                       WHERE id=? AND notified=0 AND warned_1min=0""",
-                    (r["id"],),
+                       WHERE id=? AND notified=0 AND warned_1min=0
+                         AND (delivery_retry_after IS NULL OR delivery_retry_after <= ?)""",
+                    (r["id"], n.isoformat()),
                 )
                 await db.commit()
                 if claimed.rowcount != 1:
@@ -1191,7 +1322,16 @@ class Boss(commands.Cog):
                 description=f"**{r['content']}**{miss_str}  — {fmt_remain(at - n)}",
                 color=0xFF8C00,
             )
-            await channel.send(embed=embed)
+            try:
+                await channel.send(embed=embed)
+            except discord.DiscordServerError as error:
+                await self._retry_scheduler_delivery(r["id"], "1m", error)
+                delivery_errors.append(error)
+                continue
+            except Exception as error:
+                await self._record_scheduler_delivery_uncertain(r["id"], error)
+                raise
+            await self._clear_scheduler_delivery_error(r["id"])
 
         # ── 정각 알림 ─────────────────────────────────────
         for r in rows_final:
@@ -1205,8 +1345,9 @@ class Boss(commands.Cog):
                 claimed = await db.execute(
                     """UPDATE schedules
                        SET warned_5min=1, warned_1min=1, notified=1
-                       WHERE id=? AND notified=0""",
-                    (r["id"],),
+                       WHERE id=? AND notified=0
+                         AND (delivery_retry_after IS NULL OR delivery_retry_after <= ?)""",
+                    (r["id"], n.isoformat()),
                 )
                 await db.commit()
                 if claimed.rowcount != 1:
@@ -1220,7 +1361,16 @@ class Boss(commands.Cog):
                 color=0xED4245,
             )
             view = BossActionView(r["guild_id"], r["boss_name"]) if r["boss_name"] and not r["is_fixed"] and not r["boss_fixed"] else None
-            await channel.send(embed=embed, view=view)
+            try:
+                await channel.send(embed=embed, view=view)
+            except discord.DiscordServerError as error:
+                await self._retry_scheduler_delivery(r["id"], "spawn", error)
+                delivery_errors.append(error)
+                continue
+            except Exception as error:
+                await self._record_scheduler_delivery_uncertain(r["id"], error)
+                raise
+            await self._clear_scheduler_delivery_error(r["id"])
 
             tts_cog = self.bot.get_cog("TTS")
             if tts_cog:
@@ -1313,6 +1463,12 @@ class Boss(commands.Cog):
                      new_at.isoformat(), new_miss),
                 )
                 await db.commit()
+
+        # A failed delivery must not prevent unrelated boss maintenance in this
+        # tick. Raise only after every row and auto-schedule update has had a
+        # chance to run, so the existing health/audit path still records it.
+        if delivery_errors:
+            raise delivery_errors[0]
 
     @tasks.loop(hours=24)
     async def cleanup_old_schedules(self):
