@@ -36,7 +36,9 @@ The bridge renders a guest command as escaped plain text (`nickname: command`).
 No fenced code block or public web-origin badge is added. The authoritative
 `web_guest` actor type remains internal, and Discord mentions are disabled.
 
-## Rollout boundary
+## Production rollout
 
-Implementation approval does not authorize production deployment or container
-recreation. Rollout remains `004 → 001 → 002 → 003`, one bot at a time.
+Implementation approval did not by itself authorize production operations.
+The owner separately approved deployment and container recreation on
+2026-08-10. Commit `253fe17` was then rolled out one bot at a time in the order
+`004 → 001 → 002 → 003`; all four health gates passed without rollback.
