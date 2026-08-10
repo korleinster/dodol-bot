@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS schedules (
     warned_5min  INTEGER NOT NULL DEFAULT 0,
     warned_1min  INTEGER NOT NULL DEFAULT 0,
     notified     INTEGER NOT NULL DEFAULT 0,
+    delivery_retry_after TEXT,
+    delivery_retry_count INTEGER NOT NULL DEFAULT 0,
+    delivery_error_code  TEXT,
     created_at   TEXT    NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
@@ -214,6 +217,9 @@ async def init_db() -> None:
             "ALTER TABLE bosses ADD COLUMN fixed_time TEXT",
             "ALTER TABLE schedules ADD COLUMN warned_5min INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE schedules ADD COLUMN warned_1min INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE schedules ADD COLUMN delivery_retry_after TEXT",
+            "ALTER TABLE schedules ADD COLUMN delivery_retry_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE schedules ADD COLUMN delivery_error_code TEXT",
             "ALTER TABLE contributions ADD COLUMN actor_type TEXT NOT NULL DEFAULT 'discord'",
             "ALTER TABLE contributions ADD COLUMN actor_ref TEXT",
             "ALTER TABLE web_broadcast_event ADD COLUMN bot_number INTEGER NOT NULL DEFAULT 3",

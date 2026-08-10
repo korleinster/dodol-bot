@@ -4,10 +4,12 @@ import sys
 import tempfile
 import types
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+
+import discord
 
 if "gtts" not in sys.modules:
     try:
@@ -19,7 +21,7 @@ if "gtts" not in sys.modules:
 
 from src import db as db_module
 from src.cogs import boss as boss_module
-from src.cogs.boss import Boss, format_schedule_tts
+from src.cogs.boss import Boss, format_schedule_tts, scheduler_delivery_retry_delay
 from src.web_bridge import WebBridge, _scheduler_health_payload
 
 
@@ -325,6 +327,132 @@ class SchedulerRecoveryTest(unittest.IsolatedAsyncioTestCase):
             "warned_5min": 1,
             "warned_1min": 1,
         }])
+
+    async def test_discord_5xx_releases_final_claim_then_retries_once_due(self):
+        scheduled_at = datetime(2026, 7, 27, 10, 0, 0)
+        connection = sqlite3.connect(db_module.DB_PATH)
+        connection.execute(
+            "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?,?,?)",
+            (100, 3, 200),
+        )
+        connection.execute(
+            """INSERT INTO schedules
+               (guild_id, bot_number, content, scheduled_at)
+               VALUES (?,?,?,?)""",
+            (100, 3, "임의 예약", scheduled_at.isoformat()),
+        )
+        connection.commit()
+        connection.close()
+
+        discord_5xx = discord.DiscordServerError(
+            SimpleNamespace(status=503, reason="unavailable"),
+            "temporary Discord failure",
+        )
+        channel = SimpleNamespace(
+            guild=SimpleNamespace(id=100),
+            send=AsyncMock(side_effect=[discord_5xx, None]),
+        )
+        cog = _bare_boss()
+        cog.bot.get_channel = lambda channel_id: channel
+        cog.bot.get_cog = lambda name: None
+
+        with patch.object(boss_module, "now", return_value=scheduled_at):
+            with self.assertRaises(discord.DiscordServerError):
+                await cog._check_schedules_inner()
+            # The durable delay prevents a per-second retry storm.
+            await cog._check_schedules_inner()
+
+        failed = self._rows(
+            """SELECT notified, warned_5min, warned_1min, delivery_retry_count,
+                      delivery_error_code, delivery_retry_after
+               FROM schedules"""
+        )
+        self.assertEqual(failed[0]["notified"], 0)
+        self.assertEqual(failed[0]["warned_5min"], 1)
+        self.assertEqual(failed[0]["warned_1min"], 1)
+        self.assertEqual(failed[0]["delivery_retry_count"], 1)
+        self.assertEqual(failed[0]["delivery_error_code"], "DISCORD_SERVER_ERROR")
+        self.assertEqual(
+            failed[0]["delivery_retry_after"],
+            (scheduled_at + timedelta(seconds=5)).isoformat(),
+        )
+        self.assertEqual(channel.send.await_count, 1)
+
+        with patch.object(
+            boss_module,
+            "now",
+            return_value=scheduled_at + timedelta(seconds=5),
+        ):
+            await cog._check_schedules_inner()
+
+        self.assertEqual(channel.send.await_count, 2)
+        self.assertEqual(self._rows(
+            """SELECT notified, delivery_retry_count, delivery_error_code,
+                      delivery_retry_after FROM schedules"""
+        ), [{
+            "notified": 1,
+            "delivery_retry_count": 0,
+            "delivery_error_code": None,
+            "delivery_retry_after": None,
+        }])
+
+
+class SchedulerDeliveryPolicyTest(unittest.TestCase):
+    def test_retry_delay_is_bounded_and_ordered(self):
+        self.assertEqual(
+            [scheduler_delivery_retry_delay(attempt) for attempt in range(1, 7)],
+            [5, 15, 30, 60, 120, 120],
+        )
+
+
+class SchedulerDeliveryMigrationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_columns_are_added_to_existing_schedule_rows(self):
+        previous = db_module.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bot.db"
+            connection = sqlite3.connect(path)
+            connection.executescript("""
+                CREATE TABLE schedules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    bot_number INTEGER NOT NULL,
+                    boss_name TEXT,
+                    content TEXT NOT NULL,
+                    scheduled_at TEXT NOT NULL,
+                    is_fixed INTEGER NOT NULL DEFAULT 0,
+                    miss_count INTEGER NOT NULL DEFAULT 0,
+                    warned_5min INTEGER NOT NULL DEFAULT 0,
+                    warned_1min INTEGER NOT NULL DEFAULT 0,
+                    notified INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+                );
+                INSERT INTO schedules
+                    (guild_id, bot_number, content, scheduled_at)
+                    VALUES (100, 3, 'legacy reservation', '2026-07-27T10:00:00');
+            """)
+            connection.commit()
+            connection.close()
+            db_module.DB_PATH = path
+            try:
+                await db_module.init_db()
+                connection = sqlite3.connect(path)
+                columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(schedules)")
+                }
+                legacy = connection.execute(
+                    """SELECT delivery_retry_after, delivery_retry_count,
+                              delivery_error_code FROM schedules""",
+                ).fetchone()
+                connection.close()
+                self.assertTrue({
+                    "delivery_retry_after",
+                    "delivery_retry_count",
+                    "delivery_error_code",
+                }.issubset(columns))
+                self.assertEqual(legacy, (None, 0, None))
+            finally:
+                db_module.DB_PATH = previous
 
 
 class SchedulerHealthPayloadTest(unittest.TestCase):
