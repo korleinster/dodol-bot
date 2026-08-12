@@ -46,7 +46,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 | Database | SQLite + aiosqlite |
 | Price API | PLAYNC Developer Center (`dev-api.plaync.com/l2m/v1.0`) |
 | Weather API | Open-Meteo (free, no key required) |
-| Telegram | aiohttp (운영 알림 발송) / requests (server_bot 공지) |
+| Telegram | aiohttp for outbound operational alerts; the host server bot owns commands |
 | Primary deployment | Ubuntu 26.04 + Docker Compose (Mac Mini) |
 | DR deployment | Fly.io — 도쿄 nrt, scale=0 대기 |
 
@@ -112,7 +112,7 @@ PLAYNC_API_KEY=your_api_key_here
 # DB path (Docker volume mount — no change needed)
 DB_PATH=./data/bot.db
 
-# Telegram broadcast (optional — bot-001 only)
+# Telegram outbound operational alerts (optional, shared by enabled instances)
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_CHAT_ID=your_telegram_chat_id
 
@@ -611,8 +611,15 @@ Gateway health is cleared immediately on `disconnect` and restored by either
 - Marker exists + first `on_ready` → error restart (same container, process restarted)
 - `on_ready` called 2+ times → network reconnection
 
-**Requirements:** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`  
-If either is missing, all Telegram features are silently disabled.
+**Requirements:** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the runtime
+environment. They are used only for outbound operational alerts. If either is
+missing, outbound Telegram alerts are silently disabled; Discord operation is
+unchanged.
+
+This repository does not poll Telegram or register Telegram commands. The
+Mac Mini `server_bot.py` service exclusively owns polling, `/announce`, command
+menus, and private-owner authorization. This prevents two processes from
+consuming the same update stream or overwriting each other's command menu.
 
 ---
 
@@ -668,10 +675,10 @@ docker compose up -d
 git pull origin main
 export GIT_COMMIT=$(git rev-parse --short HEAD)
 docker compose build
+docker compose up -d --no-deps dodol-bot-004
 docker compose up -d --no-deps dodol-bot-001
 docker compose up -d --no-deps dodol-bot-002
 docker compose up -d --no-deps dodol-bot-003
-docker compose up -d --no-deps dodol-bot-004
 ```
 
 **Restart a single bot**:
@@ -711,8 +718,8 @@ tail -20 ~/dodol-bot/backups/backup.log
 | `DISCORD_TOKEN_001` ~ `004` | Bot tokens |
 | `PLAYNC_API_KEY` | PLAYNC Developer Center API key |
 | `DB_PATH` | `./data/bot.db` (Docker volume mount) |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token (optional, bot-001 only) |
-| `TELEGRAM_CHAT_ID` | Allowed Telegram chat ID for `/announce` |
+| `TELEGRAM_BOT_TOKEN` | Telegram token for outbound operational alerts only |
+| `TELEGRAM_CHAT_ID` | Destination chat for outbound operational alerts |
 
 > Timezone: KST (UTC+9) — configured via `timedatectl set-timezone Asia/Seoul`.
 
@@ -766,7 +773,6 @@ DiscordBot/
 └── src/
     ├── db.py                # DB init / connection / default boss list
     ├── korean.py            # Korean consonant search, partial matching
-    ├── telegram_listener.py # Telegram → Discord broadcast (/announce)
     ├── utils/
     │   └── notify.py        # Operational alert utility (Discord + Telegram)
     └── cogs/
@@ -790,6 +796,7 @@ DiscordBot/
 | [docs/notification-logic.md](docs/notification-logic.md) | Alert timing (1s loop, ±2s precision), auto re-scheduling, auto-miss flow |
 | [docs/error-cases.md](docs/error-cases.md) | Bot behavior for edge cases |
 | [docs/migration-plan-macmini.md](docs/migration-plan-macmini.md) | Deployment infrastructure history and fly.io DR setup |
+| [docs/telegram-ownership.md](docs/telegram-ownership.md) | Telegram polling, command-menu, and outbound-alert ownership |
 
 ---
 
