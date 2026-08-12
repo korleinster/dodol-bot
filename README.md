@@ -28,11 +28,10 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
    - [Help](#help)
 6. [Multi-Instance](#multi-instance)
 7. [Telegram Integration](#telegram-integration)
-8. [Host Service Control](#host-service-control)
-9. [Ubuntu + Docker Deployment](#ubuntu--docker-deployment)
-10. [Project Structure](#project-structure)
-11. [Multi-Bot Web Bridge](#multi-bot-web-bridge)
-12. [TTS and Voice Runtime](#tts-and-voice-runtime)
+8. [Ubuntu + Docker Deployment](#ubuntu--docker-deployment)
+9. [Project Structure](#project-structure)
+10. [Multi-Bot Web Bridge](#multi-bot-web-bridge)
+11. [TTS and Voice Runtime](#tts-and-voice-runtime)
 
 ---
 
@@ -617,32 +616,6 @@ If either is missing, all Telegram features are silently disabled.
 
 ---
 
-## Host Service Control
-
-W13 includes an inert, separately installed Telegram controller for a single
-owner to inspect or restart exactly five services. IDs 1–4 represent
-`dodol-bot-001` through `dodol-bot-004`; ID 5 represents `leinster-center`.
-It uses a dedicated Telegram bot token so it cannot conflict with the existing
-announcement listener.
-
-The controller accepts `/services`, `/status N`, `/restart N`, `/재시작 N`,
-and a strict `N번 컨테이너 재실행해` form. Restart requires a one-use
-30-second inline confirmation. Exact private-chat and owner-user identifiers,
-per-service cooldown, a global restart budget, serialized execution, and a
-post-restart health gate are enforced before success is reported.
-
-The Telegram process never receives Docker-socket access and never passes
-message text to a shell. A root-owned helper accepts only the fully enumerated
-`status|restart` plus `1|2|3|4|5` argument pairs. Home Assistant, host reboot,
-restart-all, deployment, image recreation, Tailscale, Cloudflare, ports,
-databases, and arbitrary commands are intentionally unsupported.
-
-Installation and rollback instructions are in
-[`ops/telegram_service_control/README.md`](ops/telegram_service_control/README.md).
-Committing these assets does not install, enable, deploy, or restart anything.
-
----
-
 ## Ubuntu + Docker Deployment
 
 Running on Mac Mini (Ubuntu 26.04 LTS) via Docker Compose.
@@ -788,8 +761,6 @@ DiscordBot/
 │   ├── fly-activate.sh      # Emergency: activate fly.io DR (scale=1)
 │   ├── fly-deactivate.sh    # Recovery: deactivate fly.io (scale=0)
 │   └── fly-sync-db.sh       # Sync Mac Mini DB → fly.io volumes (cron daily 03:00)
-├── ops/
-│   └── telegram_service_control/ # Inert owner-only host controller assets
 ├── data/
 │   └── bot.db               # SQLite DB (Docker volume mount → /home/leinster/dodol-bot/data/)
 └── src/
