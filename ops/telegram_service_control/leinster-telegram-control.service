@@ -1,0 +1,31 @@
+[Unit]
+Description=LeinyGames Telegram service controller
+After=network-online.target docker.service leinster-center.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=leinster
+Group=leinster
+WorkingDirectory=/home/leinster/dodol-bot
+EnvironmentFile=/etc/leinygames-telegram-control.env
+ExecStart=/home/leinster/dodol-bot/venv/bin/python -m ops.telegram_service_control.controller
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=20s
+UMask=0077
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/leinygames-telegram-control
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+RestrictSUIDSGID=false
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
