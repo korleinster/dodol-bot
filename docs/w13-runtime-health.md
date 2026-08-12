@@ -52,3 +52,21 @@ control plane.
 - Confirm no service mounts `/var/run/docker.sock`.
 - During rollout, verify each bot independently in the order approved by the
   owner and stop before the next bot if any health gate fails.
+
+## Production rollout
+
+The owner-approved rollout completed on 2026-08-12 at commit `706b84b`.
+
+- A pre-rollout SQLite online backup passed `PRAGMA quick_check`.
+- The image was built without cache and contained no environment file,
+  database, log, or backup under `/app`.
+- All 96 tests passed inside the production image.
+- Containers were recreated only in `004 → 001 → 002 → 003` order. Each target
+  reached Docker `healthy`, logged the deployed commit and dedicated bridge
+  socket, and left every other container unchanged during its gate.
+- Bot 003 confirmed its configured Discord voice connection.
+- Final live checks found all four containers on the same new image, all four
+  dedicated sockets present, no recent scheduler-tick or bridge-start failure,
+  and `PRAGMA quick_check=ok` on the live database.
+- Tailscale, external ports, Home Assistant, and unrelated containers were not
+  changed.
