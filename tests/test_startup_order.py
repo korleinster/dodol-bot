@@ -1,3 +1,4 @@
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -19,6 +20,7 @@ class _FakeBot:
     def __init__(self, bot_number=3):
         self.calls = []
         self.bot_number = bot_number
+        self.user = "test-bot"
         self._ready_count = 0
         self._bridge_start_error_code = None
         self._bridge_start_error_reported = False
@@ -122,6 +124,25 @@ class StartupLifecycleTest(unittest.IsolatedAsyncioTestCase):
         ):
             await bot_main.run_bot(3, "token", bot)
         self.assertEqual(bot.calls[-1], "bot.close")
+
+    async def test_gateway_disconnect_marks_runtime_unhealthy_and_reports_only_long_recovery(self):
+        bot = _FakeBot()
+        with patch("src.web_bridge.start_web_bridge", new=AsyncMock(return_value=None)):
+            await bot_main.run_bot(3, "token", bot)
+
+        with (
+            patch.object(bot_main, "_notify_ready", new=AsyncMock()) as notify_ready,
+            patch("src.utils.notify.alert", new=AsyncMock()) as alert,
+        ):
+            await bot.on_disconnect()
+            self.assertEqual(bot.runtime_health["discord"], "stopped")
+            bot._gateway_disconnect_started_at = time.monotonic() - 61
+            await bot.on_resumed()
+
+        self.assertEqual(bot.runtime_health["discord"], "ready")
+        notify_ready.assert_not_awaited()  # a resume must not repeat startup messages
+        alert.assert_awaited_once()
+        self.assertIn("61초", alert.await_args.args[2])
 
     async def test_boss_cleanup_and_weather_hooks_wait_for_initialized_client(self):
         wait_until_ready = AsyncMock()

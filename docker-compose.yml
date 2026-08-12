@@ -26,6 +26,12 @@ services:
       BOTAM_BRIDGE_001_SOCKET: /app/data/botam-001.sock
     volumes:
       - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.health_probe"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 4
     logging:
       driver: "json-file"
       options:
@@ -47,6 +53,12 @@ services:
       BOTAM_BRIDGE_002_SOCKET: /app/data/botam-002.sock
     volumes:
       - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.health_probe"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 4
     logging:
       driver: "json-file"
       options:
@@ -68,6 +80,12 @@ services:
       BOTAM_BRIDGE_003_SOCKET: /app/data/botam-003.sock
     volumes:
       - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.health_probe"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 4
     logging:
       driver: "json-file"
       options:
@@ -89,6 +107,12 @@ services:
       BOTAM_BRIDGE_004_SOCKET: /app/data/botam-004.sock
     volumes:
       - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.health_probe"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 4
     logging:
       driver: "json-file"
       options:

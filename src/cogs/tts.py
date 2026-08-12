@@ -4,10 +4,12 @@ from concurrent.futures import ThreadPoolExecutor
 import importlib.metadata
 import importlib.util
 import os
+import random
 import re
 import shutil
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Mapping
@@ -36,6 +38,10 @@ EDGE_TTS_BOT_NUMBERS = frozenset(range(1, 5))
 _EDGE_RATE_RE = re.compile(r"^[+-]\d+%$")
 _EDGE_PITCH_RE = re.compile(r"^[+-]\d+Hz$")
 _TTS_SYNTHESIS_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tts-synthesis")
+VOICE_RECONNECT_ATTEMPTS = 3
+VOICE_RECONNECT_BASE_DELAY_SECONDS = 1.0
+VOICE_RECONNECT_MAX_DELAY_SECONDS = 8.0
+VOICE_DISCONNECT_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -204,7 +210,9 @@ class TTS(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.bn  = bot.bot_number
-        self._connecting: set[int] = set()  # 현재 연결 시도 중인 guild_id
+        self._connect_locks: dict[int, asyncio.Lock] = {}
+        self._voice_incidents: set[int] = set()
+        self._voice_connected_guilds: set[int] = set()
         self._voice_runtime_error_code: str | None = None
 
     def _voice_runtime_ready(self) -> bool:
@@ -283,53 +291,209 @@ class TTS(commands.Cog):
 
     # ── 음성채널 연결 유지 ────────────────────────────────
 
-    async def ensure_connected(self, guild: discord.Guild) -> discord.VoiceClient | None:
-        """음성채널에 연결되어 있지 않으면 연결. 이미 연결 중이면 그대로 반환."""
-        if not self._voice_runtime_ready():
-            return None
+    @staticmethod
+    def _voice_client_is_healthy(
+        voice_client: discord.VoiceClient | None,
+        expected_channel_id: int,
+    ) -> bool:
+        """A configured channel alone is never proof of voice connectivity."""
+        if voice_client is None:
+            return False
+        try:
+            channel = voice_client.channel
+            return bool(
+                voice_client.is_connected()
+                and channel is not None
+                and int(channel.id) == expected_channel_id
+            )
+        except (AttributeError, TypeError, ValueError):
+            return False
 
+    @staticmethod
+    def _retry_delay(attempt: int) -> float:
+        """Bounded exponential backoff with jitter for Discord voice recovery."""
+        bounded = min(
+            VOICE_RECONNECT_BASE_DELAY_SECONDS * (2 ** max(0, attempt - 1)),
+            VOICE_RECONNECT_MAX_DELAY_SECONDS,
+        )
+        return bounded + random.uniform(0, bounded * 0.25)
+
+    def _set_voice_health(
+        self,
+        guild_id: int,
+        *,
+        configured: bool,
+        state: str,
+        error_code: str | None = None,
+        next_retry_at: int | None = None,
+    ) -> None:
+        from src.runtime_health import update_voice_health
+        update_voice_health(
+            self.bot,
+            guild_id,
+            configured=configured,
+            state=state,
+            error_code=error_code,
+            next_retry_at=next_retry_at,
+        )
+
+    def _schedule_voice_alert(self, guild_id: int, text: str) -> None:
+        """Alert asynchronously so an alert outage cannot hold a reconnect lock."""
+        async def send() -> None:
+            try:
+                from src.utils.notify import alert
+                await alert(self.bot, self.bn, text)
+            except Exception:
+                return
+        asyncio.create_task(send(), name=f"voice-alert-{self.bn}-{guild_id}")
+
+    def _open_voice_incident(self, guild_id: int, error_code: str) -> None:
+        if guild_id in self._voice_incidents:
+            return
+        self._voice_incidents.add(guild_id)
+        print(f"[TTS] 음성 연결 이상 감지 (guild={guild_id}, {error_code})")
+        self._schedule_voice_alert(
+            guild_id,
+            f"음성 연결 이상을 감지해 안전하게 재연결을 시도합니다 ({error_code}).",
+        )
+
+    def _close_voice_incident(self, guild_id: int) -> None:
+        if guild_id not in self._voice_incidents:
+            return
+        self._voice_incidents.discard(guild_id)
+        print(f"[TTS] 음성 연결 복구 (guild={guild_id})")
+        self._schedule_voice_alert(guild_id, "음성 연결이 복구되었습니다.")
+
+    async def _cleanup_voice_client(self, voice_client: discord.VoiceClient) -> None:
+        """Bound a stale-session cleanup before a new connect attempt."""
+        try:
+            await asyncio.wait_for(
+                voice_client.disconnect(force=True),
+                timeout=VOICE_DISCONNECT_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            return
+        except Exception:
+            # The old client can already be half-closed. A subsequent connect is
+            # still serialized, so do not let this best-effort cleanup leak out.
+            pass
+
+    async def ensure_connected(self, guild: discord.Guild) -> discord.VoiceClient | None:
+        """Verify real voice liveness, then reconnect safely when needed."""
         vc_id = await self.get_voice_channel(guild.id)
         if not vc_id:
+            self._voice_connected_guilds.discard(guild.id)
+            self._voice_incidents.discard(guild.id)
+            self._set_voice_health(
+                guild.id,
+                configured=False,
+                state="unconfigured",
+            )
+            return None
+
+        if not self._voice_runtime_ready():
+            self._set_voice_health(
+                guild.id,
+                configured=True,
+                state="unavailable",
+                error_code="VOICE_RUNTIME_UNAVAILABLE",
+            )
+            self._open_voice_incident(guild.id, "VOICE_RUNTIME_UNAVAILABLE")
             return None
 
         vc_channel = guild.get_channel(vc_id)
         if not isinstance(vc_channel, discord.VoiceChannel):
+            self._set_voice_health(
+                guild.id,
+                configured=True,
+                state="unavailable",
+                error_code="VOICE_CHANNEL_UNAVAILABLE",
+            )
+            self._open_voice_incident(guild.id, "VOICE_CHANNEL_UNAVAILABLE")
             return None
 
         voice_client: discord.VoiceClient | None = guild.voice_client  # type: ignore
-
-        if voice_client and voice_client.is_connected():
-            if voice_client.channel.id != vc_id:
-                await voice_client.move_to(vc_channel)
+        if self._voice_client_is_healthy(voice_client, vc_id):
+            self._voice_connected_guilds.add(guild.id)
+            self._set_voice_health(guild.id, configured=True, state="connected")
+            self._close_voice_incident(guild.id)
             return voice_client
 
-        # 동시 연결 시도 방지 — 다른 코루틴이 이미 연결 중이면 잠시 대기 후 재확인
-        if guild.id in self._connecting:
-            await asyncio.sleep(2.0)
-            vc: discord.VoiceClient | None = guild.voice_client  # type: ignore
-            return vc if (vc and vc.is_connected()) else None
+        # A healthy connection to the wrong room is stale too.  It is cleaned
+        # up rather than moved blindly, since a bad websocket can report a
+        # channel while no longer carrying audio.
+        # discord.py may clear ``guild.voice_client`` immediately after a
+        # disconnect. Keep observed liveness separately so that transition is
+        # still recorded as a recovery incident instead of a fresh startup.
+        previously_healthy = guild.id in self._voice_connected_guilds
+        if previously_healthy:
+            self._open_voice_incident(guild.id, "VOICE_CONNECTION_LOST")
 
-        self._connecting.add(guild.id)
-        try:
-            # 좀비 연결 강제 해제
+        lock = self._connect_locks.setdefault(guild.id, asyncio.Lock())
+        async with lock:
+            # Another task may have restored the client while this task waited.
+            voice_client = guild.voice_client  # type: ignore
+            if self._voice_client_is_healthy(voice_client, vc_id):
+                self._voice_connected_guilds.add(guild.id)
+                self._set_voice_health(guild.id, configured=True, state="connected")
+                self._close_voice_incident(guild.id)
+                return voice_client
+
             if voice_client:
-                try:
-                    await voice_client.disconnect(force=True)
-                    await asyncio.sleep(0.5)
-                except Exception:
-                    pass
+                await self._cleanup_voice_client(voice_client)
 
-            # reconnect=False: discord.py 자동 재연결 비활성화
-            # → 연결이 끊기면 voice_keepalive(60s)가 다음 재연결을 담당
-            # reconnect=True 일 때 UDP 소켓 실패 시 1~3초마다 재연결 루프 발생
-            voice_client = await vc_channel.connect(timeout=15.0, reconnect=False)
-            print(f"[TTS] 음성채널 연결: {vc_channel.name}")
-            return voice_client
-        except Exception as e:
-            print(f"[TTS] 음성채널 연결 실패 ({vc_channel.name}): {type(e).__name__}: {e}")
+            for attempt in range(1, VOICE_RECONNECT_ATTEMPTS + 1):
+                delay = self._retry_delay(attempt) if attempt < VOICE_RECONNECT_ATTEMPTS else None
+                next_retry_at = int((time.time() + delay) * 1000) if delay is not None else None
+                self._set_voice_health(
+                    guild.id,
+                    configured=True,
+                    state="recovering" if previously_healthy else "connecting",
+                    error_code="VOICE_RECONNECTING" if previously_healthy else None,
+                    next_retry_at=next_retry_at,
+                )
+                try:
+                    # Disable discord.py's unbounded reconnect loop. This
+                    # bounded, jittered worker owns all retry timing instead.
+                    candidate = await vc_channel.connect(timeout=15.0, reconnect=False)
+                    if self._voice_client_is_healthy(candidate, vc_id):
+                        self._voice_connected_guilds.add(guild.id)
+                        self._set_voice_health(guild.id, configured=True, state="connected")
+                        self._close_voice_incident(guild.id)
+                        print(f"[TTS] 음성채널 연결 확인: {vc_channel.name}")
+                        return candidate
+                    await self._cleanup_voice_client(candidate)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    print(
+                        f"[TTS] 음성채널 연결 시도 {attempt}/{VOICE_RECONNECT_ATTEMPTS} 실패 "
+                        f"({vc_channel.name}, {type(exc).__name__})",
+                    )
+
+                if attempt < VOICE_RECONNECT_ATTEMPTS:
+                    assert delay is not None
+                    # Store the exact scheduled retry rather than assuming the
+                    # caller's configured room proves anything about liveness.
+                    self._set_voice_health(
+                        guild.id,
+                        configured=True,
+                        state="recovering" if previously_healthy else "connecting",
+                        error_code="VOICE_RECONNECTING" if previously_healthy else None,
+                        next_retry_at=int((time.time() + delay) * 1000),
+                    )
+                    await asyncio.sleep(delay)
+
+            self._set_voice_health(
+                guild.id,
+                configured=True,
+                state="unavailable",
+                error_code="VOICE_RECONNECT_EXHAUSTED",
+            )
+            self._open_voice_incident(guild.id, "VOICE_RECONNECT_EXHAUSTED")
             return None
-        finally:
-            self._connecting.discard(guild.id)
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -342,18 +506,16 @@ class TTS(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def voice_keepalive(self):
-        """30초마다 연결 상태 확인 및 재연결"""
+        """Check actual voice state every minute and perform bounded recovery."""
         for guild in self.bot.guilds:
-            vc_id = await self.get_voice_channel(guild.id)
-            if not vc_id:
-                continue
-            voice_client: discord.VoiceClient | None = guild.voice_client  # type: ignore
-            if not voice_client or not voice_client.is_connected():
-                await self.ensure_connected(guild)
+            await self.ensure_connected(guild)
 
     @voice_keepalive.before_loop
     async def before_keepalive(self):
         await self.bot.wait_until_ready()
+
+    def cog_unload(self):
+        self.voice_keepalive.cancel()
 
     # ── on_message ────────────────────────────────────────
 

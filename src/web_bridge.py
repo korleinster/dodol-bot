@@ -26,6 +26,7 @@ from src.db import (
     has_web_broadcast_message,
     list_web_broadcast_events,
 )
+from src.runtime_health import runtime_health_payload, voice_target_health_payload
 
 
 BRIDGE_VERSION = 1
@@ -416,6 +417,7 @@ class WebBridge:
             "botNumber": self.bot.bot_number,
             "version": BRIDGE_VERSION,
             "scheduler": _scheduler_health_payload(self.bot),
+            "runtime": runtime_health_payload(self.bot),
         })
 
     async def targets(self, request: web.Request) -> web.Response:
@@ -446,6 +448,11 @@ class WebBridge:
                     "tts": bool(voice_id),
                 },
                 "scheduler": _scheduler_health_payload(self.bot),
+                "voice": voice_target_health_payload(
+                    self.bot,
+                    int(guild_id),
+                    configured=bool(voice_id),
+                ),
             })
         return web.json_response({"targets": targets})
 
