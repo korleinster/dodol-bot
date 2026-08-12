@@ -222,9 +222,23 @@ class ComponentDispatcherTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(len(self.boss.calls), 1)
-        self.assertEqual({first.status, second.status}, {"succeeded", "failed"})
-        failed = first if first.status == "failed" else second
-        self.assertEqual(failed.error_code, "ACTION_IN_PROGRESS")
+        self.assertEqual(sum(result.status == "succeeded" for result in (first, second)), 1)
+        duplicate = second if first.status == "succeeded" else first
+        self.assertIn(duplicate.status, {"failed", "already_processed"})
+        if duplicate.status == "failed":
+            self.assertEqual(duplicate.error_code, "ACTION_IN_PROGRESS")
+        else:
+            self.assertIsNone(duplicate.error_code)
+        self.assertTrue(all(item.disabled for item in message.components[0].children))
+        self.assertEqual(message.channel.send.await_count, 1)
+
+        async with db_module.get_db() as db:
+            row = await (await db.execute(
+                """SELECT status, attempt_count FROM component_action_claim
+                   WHERE bot_number=? AND guild_id=? AND message_id=?""",
+                (3, 100, 50),
+            )).fetchone()
+        self.assertEqual((row["status"], row["attempt_count"]), ("succeeded", 1))
 
     async def test_business_failure_preserves_button_and_allows_a_new_retry(self):
         self.boss.failures = 1
