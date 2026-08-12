@@ -556,6 +556,13 @@ class BridgeTargetSchedulerHealthTest(unittest.IsolatedAsyncioTestCase):
             "lastTickAt": 200,
             "errorCode": None,
         })
+        self.assertEqual(payload["targets"][0]["voice"], {
+            "configured": True,
+            "connected": False,
+            "state": "connecting",
+            "lastErrorCode": None,
+            "nextRetryAt": None,
+        })
 
 
 if __name__ == "__main__":

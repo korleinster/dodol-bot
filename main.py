@@ -1,9 +1,16 @@
 import asyncio
 import os
+import time
+from contextlib import suppress
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from src.db import init_db, ensure_default_bosses
+from src.runtime_health import (
+    initialize_runtime_health,
+    mark_discord_health,
+    write_health_file,
+)
 
 load_dotenv()
 
@@ -24,6 +31,8 @@ _REASON_LABEL = {
     "error":     ("⚠️", "오류 재시작"),
     "reconnect": ("🔄", "네트워크 재연결"),
 }
+GATEWAY_RECOVERY_ALERT_SECONDS = 60
+MAX_RECORDED_GATEWAY_DOWNTIME_SECONDS = 24 * 60 * 60
 
 
 def _detect_start_reason(bot_number: int, ready_count: int) -> str:
@@ -59,13 +68,22 @@ def make_bot(bot_number: int) -> commands.Bot:
     bot._ready_count = 0  # on_ready 호출 횟수 (네트워크 재연결 감지용)
     bot._bridge_start_error_code = None
     bot._bridge_start_error_reported = False
+    bot._gateway_disconnect_started_at = None
     bot.scheduler_health = {
         "status": "starting",
         "bootstrapCompletedAt": None,
         "lastTickAt": None,
         "errorCode": None,
     }
+    initialize_runtime_health(bot)
     return bot
+
+
+async def _health_reporter(bot: commands.Bot) -> None:
+    """Keep Docker's local probe current without exposing a network port."""
+    while True:
+        write_health_file(bot)
+        await asyncio.sleep(5)
 
 
 async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) -> None:
@@ -77,6 +95,8 @@ async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) 
         bot._bridge_start_error_code = None
     if not hasattr(bot, "_bridge_start_error_reported"):
         bot._bridge_start_error_reported = False
+    if not hasattr(bot, "_gateway_disconnect_started_at"):
+        bot._gateway_disconnect_started_at = None
     if not hasattr(bot, "scheduler_health"):
         bot.scheduler_health = {
             "status": "starting",
@@ -84,15 +104,56 @@ async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) 
             "lastTickAt": None,
             "errorCode": None,
         }
+    if not isinstance(getattr(bot, "runtime_health", None), dict):
+        initialize_runtime_health(bot)
+    health_task = asyncio.create_task(_health_reporter(bot))
+
+    def consume_gateway_recovery() -> int | None:
+        disconnect_started_at = bot._gateway_disconnect_started_at
+        bot._gateway_disconnect_started_at = None
+        if isinstance(disconnect_started_at, (int, float)):
+            return min(
+                max(0, int(time.monotonic() - disconnect_started_at)),
+                MAX_RECORDED_GATEWAY_DOWNTIME_SECONDS,
+            )
+        return None
+
+    async def report_gateway_recovery(recovered_after_seconds: int | None) -> None:
+        if recovered_after_seconds is None:
+            return
+        print(
+            f"[뚠뚠봇{bot_number:03d}] Discord gateway 복구 "
+            f"(downtime: {recovered_after_seconds}s)",
+        )
+        if recovered_after_seconds < GATEWAY_RECOVERY_ALERT_SECONDS:
+            return
+        from src.utils.notify import alert
+        try:
+            await asyncio.wait_for(
+                alert(
+                    bot,
+                    bot_number,
+                    "Discord gateway 연결이 "
+                    f"{recovered_after_seconds}초 후 복구되었습니다.",
+                ),
+                timeout=5,
+            )
+        except Exception:
+            # Recovery reporting must never delay Discord reconnect.
+            pass
 
     @bot.event
     async def on_ready():
+        recovered_after_seconds = consume_gateway_recovery()
         commit = os.getenv("GIT_COMMIT", "unknown")
         reason = _detect_start_reason(bot_number, bot._ready_count)
         bot._ready_count += 1
+        mark_discord_health(bot, True)
+        write_health_file(bot)
         emoji, label = _REASON_LABEL[reason]
         print(f"[뚠뚠봇{bot_number:03d}] {bot.user} 온라인 — {label} (commit: {commit})")
         await _notify_ready(bot, bot_number, commit, reason)
+        await report_gateway_recovery(recovered_after_seconds)
         if bot._bridge_start_error_code and not bot._bridge_start_error_reported:
             bot._bridge_start_error_reported = True
             from src.utils.notify import alert
@@ -102,6 +163,24 @@ async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) 
                 "웹 연동 시작에 실패했습니다 "
                 f"({bot._bridge_start_error_code}). Discord 핵심 기능은 계속 동작합니다.",
             )
+
+    @bot.event
+    async def on_disconnect():
+        if bot._gateway_disconnect_started_at is None:
+            bot._gateway_disconnect_started_at = time.monotonic()
+            print(f"[뚠뚠봇{bot_number:03d}] Discord gateway 연결 끊김 감지")
+        mark_discord_health(bot, False)
+        write_health_file(bot)
+
+    @bot.event
+    async def on_resumed():
+        # discord.py emits `resumed`, not `ready`, when an existing gateway
+        # session resumes successfully. Restore health here so a normal resume
+        # cannot leave the container permanently unhealthy.
+        recovered_after_seconds = consume_gateway_recovery()
+        mark_discord_health(bot, True)
+        write_health_file(bot)
+        await report_gateway_recovery(recovered_after_seconds)
 
     bridge = None
     try:
@@ -126,6 +205,11 @@ async def run_bot(bot_number: int, token: str, bot: commands.Bot | None = None) 
 
         await bot.connect(reconnect=True)
     finally:
+        mark_discord_health(bot, False)
+        write_health_file(bot)
+        health_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await health_task
         try:
             if bridge is not None:
                 await bridge.close()
@@ -176,8 +260,11 @@ async def _notify_ready(
                 except Exception:
                     pass
 
-    # 텔레그램: 모든 유형 발송
-    await send_telegram(f"{emoji} 뚠뚠봇{bot_number:03d} {label} (commit: {commit})")
+    # Short Discord gateway flaps are reported only after a >=60-second
+    # recovery in on_ready. Deployment and process-error notifications retain
+    # their established Telegram behavior.
+    if reason != "reconnect":
+        await send_telegram(f"{emoji} 뚠뚠봇{bot_number:03d} {label} (commit: {commit})")
 
 
 async def main() -> None:

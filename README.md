@@ -272,6 +272,18 @@ only when its voice channel is configured and the pinned runtime is healthy.
 Bots without a voice channel keep commands, components, and games available but
 return a safe TTS-unavailable response.
 
+W13 separates voice configuration from actual liveness. A stored channel ID is
+never treated as a connected voice client. The keepalive verifies the current
+client and channel, cleans up stale sessions, and performs three serialized,
+bounded reconnect attempts with jitter. Each guild receives its own safe voice
+projection; another guild's live connection cannot make it appear connected.
+
+Every container has a local file-based health check. It becomes ready only when
+the Discord gateway and scheduler are ready and every configured voice target
+is connected; bots with no voice target remain valid. The probe opens no port
+and requires no container-runtime access. Docker Compose records `healthy` or
+`unhealthy`; the health check does not by itself restart an unhealthy container.
+
 ---
 
 ## Command Reference
@@ -586,12 +598,15 @@ The bot automatically sends Telegram notifications for operational events:
 |---|---|---|
 | ✅ Deployment start | ✅ | ✅ |
 | ⚠️ Error restart (Docker restart policy) | ✅ | ✅ |
-| 🔄 Network reconnection (WebSocket drop) | ✅ | ❌ (noise prevention) |
+| 🔄 Gateway reconnection (`ready`) | ✅ | ❌ (noise prevention) |
+| 🔄 Gateway session resume after 60+ seconds | ✅ once with downtime | ✅ once |
 | ⚠️ `check_schedules` incident opens (loop kept alive) | ✅ once | ✅ once |
 | ✅ 30 consecutive scheduler ticks recover an incident | ✅ once | ✅ once |
 | ⚠️ `check_schedules` loop crash + restart | ✅ | ✅ |
 
-Restart type is detected via `/tmp` marker file and `on_ready` call count:
+Restart type is detected via `/tmp` marker file and `on_ready` call count.
+Gateway health is cleared immediately on `disconnect` and restored by either
+`ready` or Discord's session-only `resumed` event:
 - No marker + first `on_ready` → deployment
 - Marker exists + first `on_ready` → error restart (same container, process restarted)
 - `on_ready` called 2+ times → network reconnection
