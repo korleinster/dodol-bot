@@ -693,7 +693,11 @@ cd ~/dodol-bot
 git pull origin main
 export GIT_COMMIT=$(git rev-parse --short HEAD)
 docker compose build
-docker compose up -d
+for service in dodol-bot-004 dodol-bot-001 dodol-bot-002 dodol-bot-003; do
+  docker compose rm -sf "$service"
+  docker compose up -d --no-deps --pull never "$service"
+  # Stop the rollout unless this service reaches healthy before continuing.
+done
 ```
 
 **Rolling deploy** (sequential per-bot restart, minimum disruption):
@@ -701,11 +705,25 @@ docker compose up -d
 git pull origin main
 export GIT_COMMIT=$(git rev-parse --short HEAD)
 docker compose build
-docker compose up -d --no-deps dodol-bot-004
-docker compose up -d --no-deps dodol-bot-001
-docker compose up -d --no-deps dodol-bot-002
-docker compose up -d --no-deps dodol-bot-003
+docker compose rm -sf dodol-bot-004
+docker compose up -d --no-deps --pull never dodol-bot-004
+# Verify health, commit log, scheduler, bridge socket, and voice before 001.
+docker compose rm -sf dodol-bot-001
+docker compose up -d --no-deps --pull never dodol-bot-001
+# Repeat the same gate before 002.
+docker compose rm -sf dodol-bot-002
+docker compose up -d --no-deps --pull never dodol-bot-002
+# Repeat the same gate before 003.
+docker compose rm -sf dodol-bot-003
+docker compose up -d --no-deps --pull never dodol-bot-003
 ```
+
+Do not rely on `--force-recreate` alone after replacing a shared local image.
+Some Compose versions keep the prior `com.docker.compose.image` ID when they
+recreate the container. Explicit `rm -sf` followed by `up --pull never` makes
+the next container use the locally built `dodol-bot:latest` image. Compare the
+running container's `.Image` ID with `docker image inspect dodol-bot:latest`
+without printing container environment variables.
 
 **Restart a single bot**:
 ```bash

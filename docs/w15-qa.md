@@ -61,9 +61,24 @@ targeted local pattern scan. Docker Compose was unavailable in this local
 environment, so image build, container health, and live Discord/voice checks
 remain unverified here.
 
-## Production gate
+## Production rollout
 
-Production rollout is pending separate owner approval. Before any deployment
-or service recreation, take the approved backup, use the approved rollout
-order, and verify the actual Discord scheduler and voice health after each
-changed bot. Local tests are not production evidence.
+The owner approved deployment and service recreation on 2026-08-13. Merge
+commit `3ebb362` was deployed to the Mac Mini.
+
+- The online backup `data/backups/bot-pre-w15-20260813-154721.db` passed
+  `PRAGMA integrity_check` before rollout.
+- Compose configuration and the cache-free image build passed. The runtime
+  image contained commit `3ebb362`, imported the W15 modules, and contained no
+  environment file, database, log, or backup artifact under `/app`.
+- An initial `--force-recreate` pass stayed on the previous Compose image ID.
+  The gate caught the mismatch before accepting the rollout. Each service was
+  then explicitly removed and recreated from the local image with `--pull
+  never`, in `004 → 001 → 002 → 003` order.
+- After every service, health, image-ID equality, commit log, scheduler recovery
+  log, bridge socket, and recent fatal-error patterns passed before proceeding.
+- Final state: all four containers are healthy on the same W15 image, all four
+  Unix sockets exist, `PRAGMA integrity_check` is `ok`, and stale pending rows
+  older than 15 seconds are zero for bot numbers 001–004.
+- Tailscale, external ports, and the leinsterCenter service were not changed.
+  M51 remains a separate undeployed runtime change.
