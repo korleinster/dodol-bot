@@ -4,15 +4,21 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord.ext import commands
 
-from src.db import ensure_default_bosses, get_db
+from src.db import get_db
+from src.schedule_recovery import (
+    reconcile_schedules_in_transaction,
+    sync_default_bosses_in_transaction,
+)
 
 
 _BOT_TARGET_RE = re.compile(r"^(?:뚠뚠봇)?0*([1-4])$")
 _DATA_TABLES = ("bosses", "schedules", "contributions")
+_KST = timezone(timedelta(hours=9))
 
 
 class BindingConflict(RuntimeError):
@@ -23,6 +29,7 @@ class BindingConflict(RuntimeError):
 class BindingMove:
     disconnected_guild_ids: tuple[int, ...]
     source_guild_id: int | None
+    recovery: dict[str, int]
 
 
 def _can_manage_guild(author: object) -> bool:
@@ -67,6 +74,8 @@ class Setup(commands.Cog):
         guild_id: int,
         text_channel_id: int,
         voice_channel_id: int | None,
+        *,
+        recovery_at: datetime | None = None,
     ) -> BindingMove:
         """Atomically move this bot's one active binding and operational data.
 
@@ -106,6 +115,26 @@ class Setup(commands.Cog):
                                 (guild_id, source_guild_id, self.bn),
                             )
 
+                    # Create an inactive destination row so default definitions
+                    # and recovery can run before the binding is exposed.
+                    await db.execute(
+                        """INSERT INTO guild_config
+                               (guild_id, bot_number, text_channel_id, voice_channel_id)
+                           VALUES (?,?,NULL,NULL)
+                           ON CONFLICT(guild_id, bot_number) DO NOTHING""",
+                        (guild_id, self.bn),
+                    )
+                    await sync_default_bosses_in_transaction(db, guild_id, self.bn)
+                    recovery = await reconcile_schedules_in_transaction(
+                        db,
+                        bot_number=self.bn,
+                        recovery_at=(
+                            recovery_at
+                            or datetime.now(_KST).replace(tzinfo=None)
+                        ),
+                        guild_id=guild_id,
+                    )
+
                     await db.execute(
                         """UPDATE guild_config
                            SET text_channel_id=NULL, voice_channel_id=NULL
@@ -126,9 +155,10 @@ class Setup(commands.Cog):
                     await db.rollback()
                     raise
 
-        return BindingMove(tuple(active_sources), source_guild_id)
+        return BindingMove(tuple(active_sources), source_guild_id, recovery)
 
-    async def _disconnect_voice(self, guild_ids: tuple[int, ...]) -> None:
+    async def _disconnect_voice(self, guild_ids: tuple[int, ...]) -> bool:
+        healthy = True
         for guild_id in guild_ids:
             guild = self.bot.get_guild(guild_id)
             voice_client = getattr(guild, "voice_client", None) if guild else None
@@ -138,13 +168,15 @@ class Setup(commands.Cog):
                 except Exception:
                     # A stale Discord voice connection must not roll back the
                     # already committed, authoritative channel binding.
-                    pass
+                    healthy = False
+        return healthy
 
-    async def _connect_target_voice(self, guild: discord.Guild) -> None:
+    async def _connect_target_voice(self, guild: discord.Guild) -> bool:
         tts = self.bot.get_cog("TTS")
         ensure_connected = getattr(tts, "ensure_connected", None) if tts else None
         if ensure_connected:
-            await ensure_connected(guild)
+            return await ensure_connected(guild) is not None
+        return False
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -238,13 +270,25 @@ class Setup(commands.Cog):
             )
             return
 
-        await self._disconnect_voice(move.disconnected_guild_ids)
-        await ensure_default_bosses(message.guild.id, self.bn)
+        degraded: list[str] = []
+        if not await self._disconnect_voice(move.disconnected_guild_ids):
+            degraded.append("이전 음성 연결 해제")
         if voice_channel_id:
-            await self._connect_target_voice(message.guild)
+            try:
+                if not await self._connect_target_voice(message.guild):
+                    degraded.append("새 음성 채널 연결")
+            except Exception:
+                degraded.append("새 음성 채널 연결")
 
         voice_channel = message.guild.get_channel(voice_channel_id) if voice_channel_id else None
-        embed = discord.Embed(title=f"✅ 뚠뚠봇{self.bn:03d} 배치 완료", color=0x57F287)
+        embed = discord.Embed(
+            title=(
+                f"⚠️ 뚠뚠봇{self.bn:03d} 배치 완료 · 음성 확인 필요"
+                if degraded
+                else f"✅ 뚠뚠봇{self.bn:03d} 배치 완료"
+            ),
+            color=0xFEE75C if degraded else 0x57F287,
+        )
         embed.add_field(name="명령 채널", value=message.channel.mention)
         embed.add_field(
             name="음성 채널",
@@ -252,6 +296,23 @@ class Setup(commands.Cog):
         )
         if move.source_guild_id is not None:
             embed.set_footer(text="기존 보스·예약·기여 데이터를 그대로 옮겼습니다.")
+        if any(move.recovery.values()):
+            embed.add_field(
+                name="일정 복구",
+                value=(
+                    f"지난 일정 {move.recovery['expired']}건 무음 정리 · "
+                    f"일반 {move.recovery['normalCreated']}건 · "
+                    f"고정 {move.recovery['fixedCreated']}건 재예약 · "
+                    f"중복 {move.recovery['duplicates']}건 정리"
+                ),
+                inline=False,
+            )
+        if degraded:
+            embed.add_field(
+                name="확인 필요",
+                value=" · ".join(degraded) + " 상태를 확인한 뒤 다시 소환하세요.",
+                inline=False,
+            )
         await message.channel.send(embed=embed)
 
     async def _cmd_status(self, message: discord.Message, config: dict):

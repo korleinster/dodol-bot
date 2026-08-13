@@ -3,10 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from src import db as db_module
-from src.cogs.setup import BindingConflict, Setup, _can_manage_guild
+from src.cogs.setup import BindingConflict, BindingMove, Setup, _can_manage_guild
 
 
 def _message(*, guild_id=200, channel_id=201, manager=True):
@@ -135,10 +135,127 @@ class SetupPolicyTest(unittest.IsolatedAsyncioTestCase):
                 self._execute(f"SELECT COUNT(*) FROM {table} WHERE guild_id=100 AND bot_number=4")[0][0],
                 0,
             )
+        self.assertEqual(
+            self._execute(
+                "SELECT COUNT(*) FROM bosses WHERE guild_id=200 AND bot_number=4 AND name='테스트 보스'"
+            )[0][0],
+            1,
+        )
+        self.assertEqual(
+            self._execute(
+                "SELECT COUNT(*) FROM schedules WHERE guild_id=200 AND bot_number=4 AND boss_name='테스트 보스' AND notified=0"
+            )[0][0],
+            1,
+        )
+        self.assertEqual(
+            self._execute(
+                "SELECT COUNT(*) FROM schedules WHERE guild_id=200 AND bot_number=4 AND boss_name='테스트 보스' AND notified=1"
+            )[0][0],
+            1,
+        )
+        self.assertEqual(
+            self._execute("SELECT COUNT(*) FROM contributions WHERE guild_id=200 AND bot_number=4")[0][0],
+            1,
+        )
+
+    async def test_recovery_failure_rolls_back_data_move_and_destination_binding(self):
+        self._seed_operational_data(100)
+        before = {
+            table: self._execute(
+                f"SELECT * FROM {table} WHERE guild_id IN (100,200) AND bot_number=4 ORDER BY id"
+            )
+            for table in ("bosses", "schedules", "contributions")
+        }
+        before_config = self._execute(
+            "SELECT * FROM guild_config WHERE guild_id IN (100,200) AND bot_number=4 ORDER BY guild_id"
+        )
+
+        with patch(
+            "src.cogs.setup.reconcile_schedules_in_transaction",
+            new=AsyncMock(side_effect=RuntimeError("recovery failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "recovery failed"):
+                await self.cog.move_config(200, 201, 202)
+
+        self.assertEqual(
+            self._execute("SELECT text_channel_id, voice_channel_id FROM guild_config WHERE guild_id=100 AND bot_number=4")[0],
+            (101, 102),
+        )
+        self.assertEqual(
+            self._execute("SELECT COUNT(*) FROM guild_config WHERE guild_id=200 AND bot_number=4")[0][0],
+            0,
+        )
+        for table in ("bosses", "schedules", "contributions"):
+            self.assertEqual(
+                self._execute(
+                    f"SELECT * FROM {table} WHERE guild_id IN (100,200) AND bot_number=4 ORDER BY id"
+                ),
+                before[table],
+            )
+            self.assertGreater(
+                self._execute(f"SELECT COUNT(*) FROM {table} WHERE guild_id=100 AND bot_number=4")[0][0],
+                0,
+            )
             self.assertEqual(
                 self._execute(f"SELECT COUNT(*) FROM {table} WHERE guild_id=200 AND bot_number=4")[0][0],
-                1,
+                0,
             )
+        self.assertEqual(
+            self._execute(
+                "SELECT * FROM guild_config WHERE guild_id IN (100,200) AND bot_number=4 ORDER BY guild_id"
+            ),
+            before_config,
+        )
+
+    async def test_post_commit_voice_failure_is_reported_as_degraded_completion(self):
+        self._seed_operational_data(100)
+        message = _message()
+        self.cog._disconnect_voice = AsyncMock(return_value=False)
+
+        await self.cog._cmd_summon(message, "뚠뚠봇004")
+
+        self.assertEqual(
+            self._execute("SELECT text_channel_id FROM guild_config WHERE guild_id=100 AND bot_number=4")[0][0],
+            None,
+        )
+        self.assertEqual(
+            self._execute("SELECT text_channel_id FROM guild_config WHERE guild_id=200 AND bot_number=4")[0][0],
+            201,
+        )
+        self.assertEqual(
+            self._execute("SELECT COUNT(*) FROM contributions WHERE guild_id=200 AND bot_number=4")[0][0],
+            1,
+        )
+        sent_embed = message.channel.send.await_args.kwargs["embed"]
+        self.assertIn("음성 확인 필요", sent_embed.title)
+        self.assertTrue(any(field.name == "일정 복구" for field in sent_embed.fields))
+        self.assertTrue(any(field.name == "확인 필요" for field in sent_embed.fields))
+
+    async def test_target_voice_none_result_is_not_reported_as_full_success(self):
+        message = _message()
+        message.author.voice = SimpleNamespace(channel=SimpleNamespace(id=202))
+        self.cog.move_config = AsyncMock(return_value=BindingMove(
+            disconnected_guild_ids=(),
+            source_guild_id=None,
+            recovery={
+                "expired": 0,
+                "normalCreated": 0,
+                "fixedCreated": 0,
+                "duplicates": 0,
+            },
+        ))
+        self.cog._disconnect_voice = AsyncMock(return_value=True)
+        ensure_connected = AsyncMock(return_value=None)
+        self.bot.get_cog = Mock(return_value=SimpleNamespace(
+            ensure_connected=ensure_connected,
+        ))
+
+        await self.cog._cmd_summon(message, "뚠뚠봇004")
+
+        sent_embed = message.channel.send.await_args.kwargs["embed"]
+        self.assertIn("음성 확인 필요", sent_embed.title)
+        self.assertTrue(any(field.name == "확인 필요" for field in sent_embed.fields))
+        ensure_connected.assert_awaited_once_with(message.guild)
 
     async def test_move_conflict_rolls_back_without_overwriting_either_server(self):
         self._seed_operational_data(100)

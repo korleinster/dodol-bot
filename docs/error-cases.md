@@ -23,6 +23,8 @@
 |---|---|
 | 다른 서버에서 `소환 뚠뚠봇NNN` | 기존 음성 연결과 이전 채널 바인딩을 해제하고 보스·예약·기여 데이터를 새 서버로 이동 |
 | 이전·대상 서버에 모두 데이터 존재 | 자동 병합·삭제 없이 중단하고 안전한 충돌 안내 |
+| 이동 중 기본 보스 동기화 또는 stale 일정 복구 실패 | `BEGIN IMMEDIATE` 트랜잭션 전체 rollback. 원본 길드 데이터·바인딩과 대상 길드의 기존 상태를 보존하고 대상 활성화 없음 |
+| commit 뒤 이전 음성 해제 또는 대상 음성 연결 실패/미연결 | 게임 데이터 rollback 없음. `음성 확인 필요` 상태로 안내하고 재소환 전 상태 확인 필요 |
 | 관리자 권한 없는 소환·나가기 | 데이터 변경 전 거부 |
 | `음성나가기` | 음성 연결과 `voice_channel_id`만 해제 |
 | `채팅나가기` | 확인 메시지 전송 후 `text_channel_id`만 해제 |
@@ -117,10 +119,22 @@ deferred message update로 승인한다. 공용 dispatcher와 영속 claim은 �
 
 | 상황 | 동작 |
 |---|---|
-| `bot.get_channel(text_channel_id)` → None | `continue` (해당 예약 알림 건너뜀, notified 변경 없음) |
+| `bot.get_channel(text_channel_id)` → None, 정각 유예 창 안 | 해당 tick은 전송하지 않고 pending 유지 |
+| 채널 미접근 상태로 정각 15초 초과 | 다음 tick의 recovery가 채널 조회 전에 무음 완료하고 안전한 미래 일정만 복구 |
 
-> 채널이 복구되면 다음 루프에서 다시 시도함.  
-> 단, 5분·1분 경고는 구간이 지나면 영구 누락.
+> 5분·1분 경고는 각 구간 안에서만 전송한다. 정각 알림은 최대 15초까지만
+> 복구를 기다리며, 그 이후에는 재입장하더라도 backlog를 replay하지 않는다.
+
+## 늦은 일정 / 재접속 / Discord 5xx
+
+| 상황 | 동작 |
+|---|---|
+| `scheduled_at < now - 15초`인 미처리 일정 | 채널 조회 전에 직렬화 recovery. Discord/TTS 없이 완료 처리하므로 오래된 backlog는 재접속 때 burst하지 않음 |
+| 정확히 `now - 15초`인 일정 | 유예 창에 포함되어 조건부 claim 뒤 최대 한 번 정각 알림 |
+| 창 밖 일반·고정 보스 | 무음 완료 뒤 각각 안전한 미래 일반/고정 예약 한 건 생성 가능 |
+| 창 밖 임의 예약 | 무음 완료만 하고 재생성하지 않음 |
+| 명시적 Discord 5xx | DB retry 상태로 재시도하되, 다음 retry가 `scheduled_at + 15초`를 넘으면 `DISCORD_SERVER_ERROR_WINDOW_EXPIRED`로 종료 |
+| timeout/전송 결과 불명 오류 | Discord가 이미 수락했을 가능성이 있어 재시도하지 않음 |
 
 ---
 

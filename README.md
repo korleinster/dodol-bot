@@ -130,6 +130,13 @@ the `소환 뚠뚠봇001` command in any channel. Repeating the targeted summon 
 different server moves that bot's one active binding and its boss, schedule,
 and contribution data without resetting them.
 
+The stored move is one SQLite write transaction: destination defaults are
+synchronized and stale schedules are reconciled before the destination binding
+is exposed. A conflict or reconciliation failure rolls back the whole stored
+move. Voice disconnect/connect happens only after that commit, so a voice
+failure never rolls back game data; the summon response explicitly asks for
+voice confirmation instead of reporting an unqualified success.
+
 ```
 소환                ← Check deployment status of all Dodol Bot instances on the server
 소환 뚠뚠봇001      ← Deploy Dodol Bot 001 to current text + voice channel
@@ -464,10 +471,29 @@ Bosses that automatically alert at a fixed day/time each week.
 - Automatically re-scheduled for the next time after each alert.
 - **Excluded** from kill/miss processing and server-open scheduling.
 
-Startup reconciliation quietly acknowledges overdue rows without replaying
-missed Discord or TTS alerts. It preserves an exact-now row, creates one safe
-future row for configured normal and fixed bosses when possible, and never
-regenerates an arbitrary reservation.
+### Late Schedule Reconciliation
+
+Startup and runtime reconciliation use an exact **15-second late-delivery
+window**. At reconciliation time `r`, a row with
+`scheduled_at < r - 15 seconds` is silently acknowledged before any Discord
+channel lookup, Discord message, or TTS request. A row exactly at
+`r - 15 seconds` remains eligible for one normal exact-time delivery.
+
+- A stale normal-boss reservation is acknowledged, then its next future
+  occurrence is derived from acknowledged history and its respawn interval.
+- A stale fixed-schedule reservation is acknowledged, then the next configured
+  future occurrence is created.
+- A stale arbitrary reservation is acknowledged and is never regenerated.
+- Rows still inside the window retain their normal one-row claim semantics;
+  repeated scheduler ticks or a fast rejoin do not duplicate Discord/TTS
+  delivery. Reconciliation is serialized, and normal/fixed duplicate pending
+  rows retain only the earliest row.
+
+Known Discord 5xx responses retain the durable retry policy, but no retry may
+be scheduled beyond `scheduled_at + 15 seconds`. A retry that would cross that
+deadline is recorded as a safe window-expired delivery failure and is not
+replayed after rejoin. Ambiguous transport failures remain non-retryable to
+avoid duplicate accepted alerts.
 
 ---
 
