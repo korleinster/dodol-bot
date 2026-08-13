@@ -1,4 +1,5 @@
 import sqlite3
+import asyncio
 import json
 import sys
 import tempfile
@@ -28,6 +29,7 @@ from src.cogs.boss import (
     scheduler_delivery_retry_delay,
 )
 from src.web_bridge import WebBridge, _scheduler_health_payload
+from src.schedule_recovery import reconcile_schedules
 
 
 def _bare_boss(bot_number=3):
@@ -208,6 +210,111 @@ class SchedulerRecoveryTest(unittest.IsolatedAsyncioTestCase):
             """SELECT * FROM schedules
                WHERE bot_number=3 AND boss_name='미등록'"""
         ), [])
+
+    async def test_runtime_silently_recovers_rows_older_than_grace_before_channel_lookup(self):
+        recovery_at = datetime(2026, 8, 13, 10, 0, 0)
+        stale_at = recovery_at - timedelta(seconds=16)
+        connection = sqlite3.connect(db_module.DB_PATH)
+        connection.execute(
+            "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?,?,?)",
+            (100, 3, 200),
+        )
+        connection.executemany(
+            """INSERT INTO bosses
+               (guild_id, bot_number, name, respawn_seconds, fixed, fixed_days, fixed_time)
+               VALUES (?,?,?,?,?,?,?)""",
+            [
+                (100, 3, "일반", 3600, 0, None, None),
+                (100, 3, "고정", None, 1, "3", "12:00"),
+            ],
+        )
+        connection.executemany(
+            """INSERT INTO schedules
+               (guild_id, bot_number, boss_name, content, scheduled_at, is_fixed)
+               VALUES (?,?,?,?,?,?)""",
+            [
+                (100, 3, "일반", "일반", stale_at.isoformat(), 0),
+                (100, 3, "고정", "고정", stale_at.isoformat(), 1),
+                (100, 3, None, "임의 예약", stale_at.isoformat(), 0),
+            ],
+        )
+        connection.commit()
+        connection.close()
+
+        cog = _bare_boss()
+        cog.bot.get_channel = Mock(side_effect=AssertionError("stale row must not resolve a channel"))
+        cog.bot.get_cog = Mock(return_value=None)
+        with patch.object(boss_module, "now", return_value=recovery_at):
+            await cog._check_schedules_inner()
+
+        self.assertEqual(cog.bot.get_channel.call_count, 0)
+        self.assertEqual(
+            self._rows("SELECT COUNT(*) AS count FROM schedules WHERE notified=0 AND scheduled_at < ?", (recovery_at.isoformat(),))[0]["count"],
+            0,
+        )
+        self.assertEqual(
+            self._rows("SELECT COUNT(*) AS count FROM schedules WHERE notified=0 AND boss_name IS NULL")[0]["count"],
+            0,
+        )
+        self.assertEqual(
+            self._rows("SELECT COUNT(*) AS count FROM schedules WHERE notified=0 AND boss_name IN ('일반','고정')")[0]["count"],
+            2,
+        )
+
+    async def test_exact_fifteen_second_late_boundary_delivers_once(self):
+        recovery_at = datetime(2026, 8, 13, 10, 0, 0)
+        connection = sqlite3.connect(db_module.DB_PATH)
+        connection.execute(
+            "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?,?,?)",
+            (100, 3, 200),
+        )
+        connection.execute(
+            "INSERT INTO schedules (guild_id, bot_number, content, scheduled_at) VALUES (?,?,?,?)",
+            (100, 3, "경계 예약", (recovery_at - timedelta(seconds=15)).isoformat()),
+        )
+        connection.commit()
+        connection.close()
+
+        channel = SimpleNamespace(guild=SimpleNamespace(id=100), send=AsyncMock())
+        cog = _bare_boss()
+        cog.bot.get_channel = Mock(return_value=channel)
+        cog.bot.get_cog = Mock(return_value=None)
+        with patch.object(boss_module, "now", return_value=recovery_at):
+            await cog._check_schedules_inner()
+            await cog._check_schedules_inner()
+
+        channel.send.assert_awaited_once()
+        self.assertEqual(self._rows("SELECT notified FROM schedules"), [{"notified": 1}])
+
+    async def test_serialized_recovery_does_not_create_duplicate_future_rows(self):
+        recovery_at = datetime(2026, 8, 13, 10, 0, 0)
+        connection = sqlite3.connect(db_module.DB_PATH)
+        connection.execute(
+            "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?,?,?)",
+            (100, 3, 200),
+        )
+        connection.execute(
+            "INSERT INTO bosses (guild_id, bot_number, name, respawn_seconds) VALUES (?,?,?,?)",
+            (100, 3, "일반", 3600),
+        )
+        connection.execute(
+            """INSERT INTO schedules
+               (guild_id, bot_number, boss_name, content, scheduled_at)
+               VALUES (?,?,?,?,?)""",
+            (100, 3, "일반", "일반", (recovery_at - timedelta(hours=2)).isoformat()),
+        )
+        connection.commit()
+        connection.close()
+
+        await asyncio.gather(*[
+            reconcile_schedules(bot_number=3, recovery_at=recovery_at)
+            for _ in range(2)
+        ])
+
+        self.assertEqual(
+            self._rows("SELECT COUNT(*) AS count FROM schedules WHERE boss_name='일반' AND notified=0")[0]["count"],
+            1,
+        )
 
     async def test_scheduler_errors_are_deduplicated_and_health_recovers(self):
         cog = _bare_boss()
@@ -406,6 +513,60 @@ class SchedulerRecoveryTest(unittest.IsolatedAsyncioTestCase):
             "delivery_retry_count": 0,
             "delivery_error_code": None,
             "delivery_retry_after": None,
+        }])
+
+    async def test_discord_5xx_retry_stops_at_late_delivery_deadline(self):
+        scheduled_at = datetime(2026, 8, 13, 10, 0, 0)
+        connection = sqlite3.connect(db_module.DB_PATH)
+        connection.execute(
+            "INSERT INTO guild_config (guild_id, bot_number, text_channel_id) VALUES (?,?,?)",
+            (100, 3, 200),
+        )
+        connection.execute(
+            "INSERT INTO schedules (guild_id, bot_number, content, scheduled_at) VALUES (?,?,?,?)",
+            (100, 3, "임의 예약", scheduled_at.isoformat()),
+        )
+        connection.commit()
+        connection.close()
+
+        discord_5xx = discord.DiscordServerError(
+            SimpleNamespace(status=503, reason="unavailable"),
+            "temporary Discord failure",
+        )
+        channel = SimpleNamespace(
+            guild=SimpleNamespace(id=100),
+            send=AsyncMock(side_effect=[discord_5xx, discord_5xx]),
+        )
+        cog = _bare_boss()
+        cog.bot.get_channel = Mock(return_value=channel)
+        cog.bot.get_cog = Mock(return_value=None)
+
+        with patch.object(boss_module, "now", return_value=scheduled_at):
+            with self.assertRaises(discord.DiscordServerError):
+                await cog._check_schedules_inner()
+        with patch.object(
+            boss_module,
+            "now",
+            return_value=scheduled_at + timedelta(seconds=5),
+        ):
+            with self.assertRaises(discord.DiscordServerError):
+                await cog._check_schedules_inner()
+        with patch.object(
+            boss_module,
+            "now",
+            return_value=scheduled_at + timedelta(seconds=20),
+        ):
+            await cog._check_schedules_inner()
+
+        self.assertEqual(channel.send.await_count, 2)
+        self.assertEqual(self._rows(
+            """SELECT notified, delivery_retry_count, delivery_retry_after,
+                      delivery_error_code FROM schedules"""
+        ), [{
+            "notified": 1,
+            "delivery_retry_count": 2,
+            "delivery_retry_after": None,
+            "delivery_error_code": "DISCORD_SERVER_ERROR_WINDOW_EXPIRED",
         }])
 
 

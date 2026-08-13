@@ -21,7 +21,10 @@ audits, and component claims to bot numbers 001–004.
 - `소환 뚠뚠봇001` 명령 시 대상 서버를 UPSERT하고 다른 서버의 같은
   봇 채널 ID를 NULL로 만든다.
 - 서버 이동 시 `bosses`, `schedules`, `contributions`의 길드 연결을 한
-  트랜잭션에서 대상 서버로 변경한다. 대상에 기존 데이터가 있으면 롤백한다.
+  `BEGIN IMMEDIATE` 트랜잭션에서 대상 서버로 변경한다. 대상에 기존 데이터가
+  있거나 기본 보스 동기화·stale 일정 복구가 실패하면 전체 롤백한다.
+- 대상 `guild_config`는 기본 보스 동기화와 stale 일정 복구가 성공할 때까지
+  비활성(NULL 채널)으로 유지되고, commit 뒤에만 활성 채널 바인딩을 가진다.
 - 나가기 명령은 채널 ID만 NULL로 만들고 다른 테이블을 삭제하지 않는다.
 
 ---
@@ -77,11 +80,19 @@ audits, and component claims to bot numbers 001–004.
 | `warned_5min` | INTEGER | 5분 전 알림 발송 완료 (0/1) |
 | `warned_1min` | INTEGER | 1분 전 알림 발송 완료 (0/1) |
 | `notified` | INTEGER | 정각 알림 발송 완료 (0/1). 1이면 처리 종료 |
+| `delivery_retry_after` | TEXT | 명시적 Discord 5xx의 다음 재시도 가능 시각. 성공/종료 시 NULL |
+| `delivery_retry_count` | INTEGER | 현재 전송 단계의 5xx 재시도 횟수 |
+| `delivery_error_code` | TEXT | 안전한 전송 종료/대기 코드. 예: `DISCORD_SERVER_ERROR_WINDOW_EXPIRED` |
 | `created_at` | TEXT | 생성 시각 |
 
 - UNIQUE 제약 없음 → 중복 방지는 코드 레벨에서 처리
 - `notified=1`인 행은 자동 미입력 처리 대상이 됨
 - `notified=1`이고 `scheduled_at`이 30일 이상 지난 행은 매일 자동 삭제 (`cleanup_old_schedules` 태스크)
+- W15 reconciliation은 `BEGIN IMMEDIATE` 안에서 일반/고정 보스별 earliest
+  due/future pending 행만 유지한다. 임의 예약은 서로 다른 사용자 예약이므로
+  이 중복 제거 대상이 아니다.
+- reconciliation 기준 시각 `r`에서 `scheduled_at < r - 15초`인 pending 행은
+  무음 완료된다. 정확히 15초 전 행은 정각 전달 유예 창에 남는다.
 
 ### 예약 상태 흐름
 
@@ -91,6 +102,11 @@ INSERT (notified=0, warned_5min=0, warned_1min=0)
   → warned_1min=1  (60~90초 남았을 때)
   → notified=1     (60초 이내 또는 경과 후)
 ```
+
+명시적 Discord 5xx만 조건부 claim을 되돌리고 `delivery_retry_after`를 기록한다.
+retry는 최대 5회이며, 다음 retry 시각이 `scheduled_at + 15초`를 넘으면
+`notified=1`을 유지하고 window-expired 오류 코드로 종료한다. 결과가 불명확한
+전송 오류는 중복 방지를 위해 claim을 되돌리지 않는다.
 
 ---
 

@@ -60,11 +60,42 @@
 다른 알림·자동 재예약 처리를 막지 않는다. 동일 장애 알림은 5분 동안 한 번만
 보내고, 정상 틱으로 회복한 뒤 새로 발생한 장애는 다시 한 번 보고한다.
 
-시작 시 과거 미처리 행은 알림과 TTS 없이 완료 처리한다. 일반 보스는 최신
-완료 시각과 리스폰 주기로 미래 시각까지 전진하고, 고정 보스는 설정된 다음
-미래 시각을 만든다. 정확히 현재 시각인 행은 일반 루프가 처리하도록
-보존하고, 임의 예약은 새로 생성하지 않으며, 다른 봇 번호의 행은 건드리지
-않는다.
+### 런타임 stale 일정 정리 (W15)
+
+시작 bootstrap과 일반 루프 모두 stale 미처리 행을 발견하면 같은 직렬화
+reconciliation을 실행한다. 기준 시각 `r`의 정확한 경계는
+`cutoff = r - 15초`다.
+
+| 예약 시각 | 동작 |
+|---|---|
+| `scheduled_at < cutoff` | 채널 조회·Discord·TTS 없이 `notified=1`로 무음 완료. `delivery_retry_after`도 지운다. |
+| `scheduled_at = cutoff` | 유예 창에 포함. 정각 알림 후보로 남아 조건부 선점 뒤 최대 한 번 발송한다. |
+| `cutoff < scheduled_at ≤ n+2초` | 기존 정각 알림 규칙으로 처리한다. |
+
+`BEGIN IMMEDIATE` write transaction이 stale 완료, 중복 제거, 다음 예약 생성까지
+묶는다. 따라서 빠른 gateway 재접속이나 다음 1초 tick이 겹쳐도 일반/고정 보스의
+미발송 미래 예약을 중복 생성하거나 같은 행의 Discord/TTS 알림을 재생하지 않는다.
+15초 창 안에 서로 다른 정상 예약이 여러 개 있으면 각각의 기존 조건부 claim이
+적용되며, 창 밖의 backlog는 절대 replay하지 않는다.
+
+- **일반 보스**: 창 밖 행을 무음 완료한 뒤 최신 완료 시각과 `respawn_seconds`를
+  미래까지 전진해 다음 한 건을 만든다. 창 안 행은 그대로 정각 처리한다.
+- **고정 보스**: 창 밖 행을 무음 완료한 뒤 설정된 다음 미래 고정 시각 한 건을
+  만든다. 창 안 행은 그대로 처리하며, 정각 처리 뒤 기존 고정 재예약 규칙을 따른다.
+- **임의 예약** (`boss_name IS NULL`): 창 밖 행은 무음 완료하고 새 행을 만들지
+  않는다. 창 안 행만 기존 정각 알림으로 최대 한 번 발송한다.
+
+다른 `bot_number`는 reconciliation 범위 밖이다. `소환` 중에는 대상 길드만 같은
+트랜잭션으로 reconciliation하므로 다른 길드의 데이터는 변경하지 않는다.
+
+### Discord 5xx 재시도와 late window
+
+명시적 Discord 5xx (`DiscordServerError`)만 5초 → 15초 → 30초 → 60초 → 120초
+간격으로 최대 5회 재시도한다. 재시도 상태는 DB에 남고, 재시작 뒤에도 유예 창
+안이면 `delivery_retry_after`가 될 때까지 기다린다. 다만 계산한 다음 retry 시각이
+`scheduled_at + 15초`를 넘으면 선점을 되돌리지 않고
+`DISCORD_SERVER_ERROR_WINDOW_EXPIRED`로 종료한다. 이 절대 deadline은 오래된
+재접속 backlog 또는 retry storm을 막는다.
 
 ---
 
