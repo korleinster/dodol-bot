@@ -118,11 +118,15 @@ reconciliation을 실행한다. 기준 시각 `r`의 정확한 경계는
 `보탐`, `보탐+` 별칭도 동일하게 텍스트 전용이다. 이 규칙은 스케줄러의
 정각 알림에서 수행하는 자동 TTS와 별개다.
 
-### W8 local verification boundary
+### Production verification boundary
 
-The multi-bot implementation and tests are complete locally. Production
-evidence is pending the owner-approved sequential order
-`004 → 001 → 002 → 003`; do not record local test output as production proof.
+Reset-race fix `6d57ad8` was deployed on 2026-10-07 in the owner-approved
+`004 → 001 → 002 → 003` order. Every bot passed fresh runtime health,
+Discord readiness, scheduler, and authenticated bridge checks; configured
+voice was connected. See [the rollout evidence](reset-race-rollout.md).
+The reset race itself was verified with isolated test databases, not by
+resetting production reservations. Previously recreated records remain until
+the owner chooses to clear them.
 
 ---
 

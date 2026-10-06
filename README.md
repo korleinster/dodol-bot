@@ -663,6 +663,16 @@ Running on Mac Mini (Ubuntu 26.04 LTS) via Docker Compose.
 | Project path | `/home/leinster/dodol-bot/` |
 | DB path | `/home/leinster/dodol-bot/data/bot.db` |
 
+### Latest Verified Rollout
+
+On 2026-10-07, reset-race fix `6d57ad8` was deployed in the approved
+`004 → 001 → 002 → 003` order. All four bots passed container, Discord,
+scheduler, and authenticated bridge health checks. Bot 003's configured voice
+connection was restored; the other bots remained voice-unconfigured. The
+online database backup and final live integrity check passed. Existing
+reservations were not reset as part of deployment. See the
+[rollout evidence](docs/reset-race-rollout.md) for per-bot times and checks.
+
 ### Initial Setup
 
 ```bash
