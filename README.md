@@ -432,8 +432,8 @@ Z+                   ← text-only full reservation list (never queues TTS)
 Every cut (via text command or button) records the user.  
 - Kill embed shows `처리자: username` in the footer  
 - `기여자` / `보탐러`: shows ranked leaderboard up to current reset  
-- `초기화`: displays final ranking, then wipes all records
-- Reset removes non-fixed pending and notified reservation history, so auto-miss will not recreate normal boss reservations after reset. Fixed-schedule boss reservations remain.
+- `초기화`: displays the final ranking, then clears non-fixed reservations, their history, and contribution records. Fixed-schedule reservations remain.
+- Auto-miss checks that its source history still exists and no pending reservation exists in the same database statement that creates the next reservation. A reset that overlaps an in-flight auto-miss pass cannot restore old reservations or miss counts; concurrent manual input cannot create a duplicate auto-miss reservation.
 
 #### Auto-Miss
 

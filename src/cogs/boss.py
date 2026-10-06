@@ -1482,7 +1482,7 @@ class Boss(commands.Cog):
         # ── 자동 미입력 처리 ──────────────────────────────
         async with get_db() as db:
             async with db.execute(
-                """SELECT s.guild_id, s.boss_name, s.scheduled_at, s.miss_count,
+                """SELECT s.id, s.guild_id, s.boss_name, s.scheduled_at, s.miss_count,
                           b.respawn_seconds, b.auto_schedule_seconds, gc.text_channel_id
                    FROM schedules s
                    JOIN bosses b ON s.guild_id=b.guild_id AND s.bot_number=b.bot_number AND s.boss_name=b.name
@@ -1519,12 +1519,23 @@ class Boss(commands.Cog):
                 while new_at <= n:
                     new_at   += timedelta(seconds=row["respawn_seconds"])
                     new_miss += 1
+                # Reset or manual input may commit after the history read.
+                # Check the source and pending row atomically with the insert.
                 await db.execute(
                     """INSERT INTO schedules
                        (guild_id, bot_number, boss_name, content, scheduled_at, miss_count)
-                       VALUES (?,?,?,?,?,?)""",
-                    (guild_id, self.bn, boss_name, boss_name,
-                     new_at.isoformat(), new_miss),
+                       SELECT s.guild_id, s.bot_number, s.boss_name, s.boss_name, ?, ?
+                       FROM schedules s
+                       WHERE s.id=? AND s.guild_id=? AND s.bot_number=? AND s.boss_name=?
+                         AND s.notified=1 AND COALESCE(s.is_fixed,0)=0
+                         AND NOT EXISTS (
+                             SELECT 1 FROM schedules pending
+                             WHERE pending.guild_id=s.guild_id
+                               AND pending.bot_number=s.bot_number
+                               AND pending.boss_name=s.boss_name
+                               AND pending.notified=0
+                         )""",
+                    (new_at.isoformat(), new_miss, row["id"], guild_id, self.bn, boss_name),
                 )
                 await db.commit()
 
