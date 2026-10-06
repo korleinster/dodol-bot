@@ -79,7 +79,8 @@ def _build_embeds(bn: int) -> list[discord.Embed]:
     ), inline=False)
     e.add_field(name="초기화", value=(
         "`전체삭제` / `초기화` / `보스전체삭제`\n"
-        "　→ 기여 랭킹 출력 후 고정 보스 제외 모든 예약 기록 삭제"
+        "　→ 기여 랭킹 출력 후 일반 예약·과거 이력·기여 기록 삭제\n"
+        "　　고정 보스 일정 유지 · 초기화 전 기록의 자동 재예약 차단"
     ), inline=False)
     e.add_field(name="임의 예약 / 직접 젠 입력", value=(
         "`22:30 공략` — 보스가 아닌 내용을 임의 시각에 예약\n"
