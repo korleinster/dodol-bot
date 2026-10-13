@@ -15,6 +15,7 @@ from typing import Any
 
 HEALTH_FILE_ENV = "BOT_HEALTH_PATH"
 DEFAULT_HEALTH_FILE = "/tmp/dodol-bot-health.json"
+RUNTIME_HEALTH_DIR_ENV = "BOT_RUNTIME_HEALTH_DIR"
 VOICE_STATES = frozenset({"unconfigured", "connecting", "connected", "recovering", "unavailable"})
 SCHEDULER_READY = "ready"
 
@@ -232,17 +233,57 @@ def health_file_path() -> Path:
     return Path(os.getenv(HEALTH_FILE_ENV, DEFAULT_HEALTH_FILE))
 
 
+def host_visible_health_path(bot: Any) -> Path | None:
+    """Select only the bot's own fixed file in the explicitly mounted data dir."""
+    directory = os.getenv(RUNTIME_HEALTH_DIR_ENV, "")
+    number = getattr(bot, "bot_number", None)
+    if not directory or type(number) is not int or number not in {1, 2, 3, 4}:
+        return None
+    return Path(directory) / f"runtime-health-{number:03d}.json"
+
+
+def host_visible_health_payload(bot: Any) -> dict[str, Any]:
+    """Minimal, non-secret observer input; freshness is based on observedAt."""
+    scheduler = getattr(bot, "scheduler_health", None)
+    scheduler = scheduler if isinstance(scheduler, dict) else {}
+    status = scheduler.get("status")
+    if status not in {"ready", "starting", "failed"}:
+        status = "starting"
+    runtime = runtime_health_payload(bot)
+    return {
+        "version": 1,
+        "botNumber": bot.bot_number,
+        "observedAt": _now_ms(),
+        "discord": runtime["discord"],
+        "schedulerStatus": status,
+        "schedulerLastTickAt": _safe_timestamp(scheduler.get("lastTickAt")),
+        "status": application_health_payload(bot)["status"],
+    }
+
+
+def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
 def write_health_file(bot: Any) -> None:
     """Atomically publish a tiny health snapshot; errors leave the probe unhealthy."""
     path = health_file_path()
     payload = application_health_payload(bot)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        os.chmod(temporary, 0o600)
-        temporary.replace(path)
+        _atomic_write(path, payload)
     except OSError:
         # Health publication failure must not take down bot commands. Docker
         # sees the missing/stale file and marks the process unhealthy instead.
         return
+    mirror = host_visible_health_path(bot)
+    if mirror is not None:
+        try:
+            _atomic_write(mirror, host_visible_health_payload(bot))
+        except OSError:
+            # Local Docker probe and bot execution must not depend on the
+            # separate host observer's mount permissions.
+            pass

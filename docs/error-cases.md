@@ -2,6 +2,46 @@
 
 각 상황에서 봇이 어떻게 동작하는지 정리.
 
+## Slack migration — Revision 5 local status (2026-10-12)
+
+Revision 5 (`SLACK-R5-CORRECTIVE-20261012`) is locally implemented and frozen;
+independent QA **PASSED** the local line-boundary and credential-redaction
+scope. The focused notifier suite passed 19/19 and the full Discord suite
+passed 124/124 under Python 3.12.14. The original R3 multiword Authorization
+and R4 next-line Korean-loss regressions pass unchanged. A separate nine-case
+dual-fake-transport matrix preserved benign Korean text, safe URLs, and line
+endings while removing every fake credential word from both payloads and the
+deduplication key; idempotence and the 3,000-character cap passed. Compilation,
+shell syntax, tracked-secret scan, and diff checks passed.
+
+The parent separately passed official Compose 5.5.1 static checks for
+telegram/slack/dual with fake inputs and an empty environment; QA did not rerun
+Compose, and no daemon/container was used. No Slack provisioning, real
+credentials or messages, deployment/restart, or provider cutover occurred.
+Telegram remains the active default and control provider; live operational
+acceptance remains a separate approval and verification gate.
+
+### Revision 4 QA finding — historical BLOCKED result
+
+R4 independent QA found next-line benign text loss in an unclosed-quote case:
+122 full tests = 121 pass + 1 failure; focused tests = 16 pass + 1 failure.
+R5 fixes this regression; the historical R4 disposition is preserved.
+
+### Revision 3 QA finding — historical BLOCKED result
+
+R3 independent QA found one quoted multiword Authorization value persisted in
+fake Telegram/Slack payloads and the deduplication key: 119 full tests = 118
+pass + 1 unexpected failure; focused tests = 13 pass + 1 failure. R4 corrected
+that leak. R4's final QA remains blocked by the distinct line-boundary content
+loss documented above.
+
+### Historical R2 QA finding (2026-10-08)
+
+The prior cross-surface probe found representative fake JSON, cookie,
+`passwd`, and quoted-password forms were not fully redacted. No real credential
+exposure was observed or implied. This finding led to the approved R3 scope and
+is retained here as history, not as an unresolved current implementation gap.
+
 ---
 
 ## 채널 미배치 상태

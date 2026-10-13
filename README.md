@@ -602,7 +602,7 @@ DISCORD_TOKEN_004=token_for_bot_004
 
 ---
 
-## Telegram Integration
+## Operations Notifications and Telegram Control
 
 ### Broadcast (공지)
 
@@ -618,7 +618,50 @@ It reads all registered channels from `guild_config` DB and posts to each via Di
 
 ### Operational Alerts (운영 알림)
 
-The bot automatically sends Telegram notifications for operational events:
+The bot can send operational alerts through the configured notification
+backend. `OPS_NOTIFICATION_BACKEND` defaults to `telegram`; `slack` and
+temporary `dual` are implemented but are not active until separately approved
+and configured. Telegram remains the current control provider. Slack delivery
+does not add a Telegram poller or change Discord gameplay behavior.
+
+Corrective Slack Revision 5 (`SLACK-R5-CORRECTIVE-20261012`) is locally
+implemented and frozen; independent QA **PASSED** the approved local scope.
+Focused notifier tests passed 19/19 and the full Discord suite passed 124/124
+under Python 3.12.14, including the original R3 credential and R4 next-line
+content regressions unchanged. A separate nine-case dual-fake-transport matrix
+preserved the benign Korean line, safe URL, and line ending while removing all
+fake credential words from Telegram/Slack payloads and the deduplication key;
+idempotence and the 3,000-character limit passed. Compilation, shell syntax,
+tracked-secret scan, and diff checks passed. The parent separately passed
+official Compose 5.5.1 static checks for telegram/slack/dual with fake inputs
+and an empty environment; independent QA did not rerun Compose, and no
+daemon/container was used. No Slack provisioning, real delivery, deployment,
+restart, or provider cutover occurred. Telegram remains the active default and
+control provider; live operational acceptance remains separately gated.
+
+R4's independent QA result remains historical **BLOCKED**: 122 full tests =
+121 pass + 1 failure and 17 focused tests = 16 pass + 1 failure because an
+unclosed quoted value consumed benign text on the next line. R5 fixes that
+regression without reclassifying the historical result.
+
+R3 independent QA is historical **BLOCKED**: 119 full tests = 118 pass + 1
+unexpected failure; focused sanitizer tests = 13 pass + 1 failure. The quoted
+multiword Authorization regression above was the sole functional blocker and
+is covered by the R4 tests.
+
+| Event | Configured ops backend | Discord channel |
+|---|---|---|
+| ✅ Deployment start | ✅ | ✅ |
+| ⚠️ Error restart (Docker restart policy) | ✅ | ✅ |
+| 🔄 Gateway reconnection (`ready`) | ✅ | ❌ (noise prevention) |
+| 🔄 Gateway session resume after 60+ seconds | ✅ once with downtime | ✅ once |
+| ⚠️ `check_schedules` incident opens (loop kept alive) | ✅ once | ✅ once |
+| ✅ 30 consecutive scheduler ticks recover an incident | ✅ once | ✅ once |
+| ⚠️ `check_schedules` loop crash + restart | ✅ | ✅ |
+
+<!-- Legacy table preserved in history below; active routing is provider-based. -->
+
+<!--
 
 | Event | Telegram | Discord channel |
 |---|---|---|
@@ -629,6 +672,7 @@ The bot automatically sends Telegram notifications for operational events:
 | ⚠️ `check_schedules` incident opens (loop kept alive) | ✅ once | ✅ once |
 | ✅ 30 consecutive scheduler ticks recover an incident | ✅ once | ✅ once |
 | ⚠️ `check_schedules` loop crash + restart | ✅ | ✅ |
+-->
 
 Restart type is detected via `/tmp` marker file and `on_ready` call count.
 Gateway health is cleared immediately on `disconnect` and restored by either
@@ -637,10 +681,22 @@ Gateway health is cleared immediately on `disconnect` and restored by either
 - Marker exists + first `on_ready` → error restart (same container, process restarted)
 - `on_ready` called 2+ times → network reconnection
 
-**Requirements:** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the runtime
-environment. They are used only for outbound operational alerts. If either is
-missing, outbound Telegram alerts are silently disabled; Discord operation is
-unchanged.
+`OPS_NOTIFICATION_BACKEND` accepts `telegram` (default), `slack`, or temporary
+`dual`; an unknown value fails closed. Telegram/dual require
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Slack/dual require
+`SLACK_BOT_TOKEN` and the `SLACK_OPERATIONS_CHANNEL_ID`,
+`SLACK_ALERTS_CHANNEL_ID`, and `SLACK_ROUTINE_CHANNEL_ID` values. The app must
+be invited to the configured private channels and have only the posting
+permission it needs (`chat:write`). Slack-only mode does not require Telegram
+credentials. Keep tokens in the restricted Mac Mini environment source; never
+commit them, place them in Compose files, or print them in logs. A missing or
+failed notification transport must not stop Discord operation.
+
+Slack notification delivery is implemented locally but is not live until a
+separately approved rollout provisions the private app/channels, protected
+credentials, and selected backend. The separate Socket Mode operations
+receiver is not this Discord bot; see the center Slack migration guide for its
+owner/workspace authorization and staged rollout.
 
 This repository does not poll Telegram or register Telegram commands. The
 Mac Mini `server_bot.py` service exclusively owns polling, `/announce`, command
@@ -774,6 +830,11 @@ tail -20 ~/dodol-bot/backups/backup.log
 | `DB_PATH` | `./data/bot.db` (Docker volume mount) |
 | `TELEGRAM_BOT_TOKEN` | Telegram token for outbound operational alerts only |
 | `TELEGRAM_CHAT_ID` | Destination chat for outbound operational alerts |
+| `OPS_NOTIFICATION_BACKEND` | `telegram` default, `slack`, or temporary `dual` |
+| `SLACK_BOT_TOKEN` | Protected Slack bot token for outbound operational alerts |
+| `SLACK_OPERATIONS_CHANNEL_ID` | Private operations channel ID |
+| `SLACK_ALERTS_CHANNEL_ID` | Private alerts channel ID |
+| `SLACK_ROUTINE_CHANNEL_ID` | Private routine channel ID |
 
 > Timezone: KST (UTC+9) — configured via `timedatectl set-timezone Asia/Seoul`.
 
