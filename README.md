@@ -322,16 +322,20 @@ raise observer privileges, or change the container UID. It fixes the specific
 writer/reader file-mode boundary; it does not claim protection against changes
 made by another writer to the shared parent directory.
 
-**R6.17 rollout gate:** direct execution is approved and source QA passed, but
-the final rebuilt image still needs the no-network cross-UID test: verify the
-host mirror is `root:<observer GID>` mode `0640`, UID/GID `1000` can read it, a
-different unprivileged UID cannot, the internal file remains `0600`, and
-repeated atomic replacement and group-assignment failure preserve these
-properties. Do not recreate bot `004` until this final-image gate passes. The
-prior R6.16 fixture reproduced the old `root:root 0600` failure; it was not a
-production mirror read test. See
+**R6.17 status:** final image
+`7e3f9a9f8904d8401f2f87e27482422ef72e99d3693d786b947fb9bba7fc28bb` passed
+the isolated cross-UID gate: the host mirror is `root:1000` mode `0640`, UID
+1000 reads it, UID 1001 is denied, the internal file remains `0600`, and
+repeated replacement plus group-assignment failure behavior pass. Bot 004's
+first attempt was rolled back after its observer-ready gate timed out; retry 1
+passed runtime and Slack receipt gates. Telegram actual receipt confirmation
+is pending. Do not resend or proceed to bot 001 until confirmed. The prior
+R6.16 `root:root 0600` fixture remains historical; the new image's separate
+UID-1000 full-suite attempt also failed because `cogs/utils` is root-owned
+0700, while the isolated UID-0 suite passed 136/136. Neither failure is hidden
+by the specific permission-gate PASS. See
 [`docs/slack-runtime-permissions-r617.md`](docs/slack-runtime-permissions-r617.md)
-for the detailed contract and gate.
+for the contract; see the coordination target result for attempt evidence.
 
 ---
 

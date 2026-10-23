@@ -234,12 +234,15 @@ Observer 권한이나 봇 컨테이너 UID를 변경하지 않고, 공유 `data`
 기존 `0777` 권한도 이 변경으로 고치지 않는다. 부모 디렉터리의 무결성까지
 보장한다고 주장하지 않는다.
 
-**R6.17 상태:** 승인된 소스 수정과 prepublication source QA는 PASS다.
-최종 새 이미지의 실제 root-to-observer 권한 검증은 아직 남아 있으므로
-004를 포함한 봇 재생성을 시작하지 않는다. 격리 이미지 시험에서
-host `root:<observer GID> 0640`, observer UID/GID `1000`의 읽기 성공, 다른
-비권한 UID 읽기 거부, 내부 `0600`, 반복 원자 교체, 그룹 변경 실패 시 기존
-미러 보존을 모두 확인해야 한다. 기존 R6.16 시험은 이전 이미지에서
-`root:root 0600` 경계를 재현했으며, 운영 미러의 실수신 시험은 아니었다.
-상세 계약은 [`slack-runtime-permissions-r617.md`](slack-runtime-permissions-r617.md)
-에 있다.
+**R6.17 상태:** 최종 이미지의 격리 root-to-observer 권한 게이트는 PASS다:
+host `root:1000 0640`, UID/GID `1000` 읽기 성공, UID `1001`의 errno 13 거부,
+내부 `0600`, 반복 원자 교체와 그룹 변경 실패 시 기존 미러 보존을 확인했다.
+004 첫 시도는 observer gate 시간 초과 뒤 롤백됐다. retry 1은 세 번의
+durable observer 캡처와 runtime health를 통과했고, Slack 실수신도 독립 QA가
+확인했다. Telegram 실수신 확인은 아직 대기 중이므로 재전송하지 않고,
+확인 전에는 001을 시작하지 않는다. 새 이미지의 별도 UID-1000 전체 시험은
+root 소유 0700 `cogs/utils` 때문에 24개 실행 중 import 오류 10건이었고, 격리
+UID-0 시험은 136/136 PASS였다. 이 결과들은 권한 게이트 PASS와 별도로
+보존한다. 기존 R6.16 `root:root 0600` 시험은 이전 이미지에서의 재현이며,
+운영 미러를 읽은 결과는 아니었다. 상세 계약은
+[`slack-runtime-permissions-r617.md`](slack-runtime-permissions-r617.md)에 있다.
