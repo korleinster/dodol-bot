@@ -32,6 +32,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 9. [Project Structure](#project-structure)
 10. [Multi-Bot Web Bridge](#multi-bot-web-bridge)
 11. [TTS and Voice Runtime](#tts-and-voice-runtime)
+12. [Runtime Health Observer](#runtime-health-observer)
 
 ---
 
@@ -290,6 +291,47 @@ the Discord gateway and scheduler are ready and every configured voice target
 is connected; bots with no voice target remain valid. The probe opens no port
 and requires no container-runtime access. Docker Compose records `healthy` or
 `unhealthy`; the health check does not by itself restart an unhealthy container.
+
+## Runtime Health Observer
+
+Each bot also publishes a small, non-secret host mirror for the existing
+unprivileged observer. Bot `NNN` writes only
+`/app/data/runtime-health-NNN.json`; the payload omits credentials and guild
+identifiers. This mirror is separate from the internal Docker health file,
+which remains mode `0600` and continues to serve the container health probe.
+
+Compose maps `BOT_RUNTIME_HEALTH_GID` from `DODOL_GID` (default `1000`). Before
+recreating a bot, confirm the resolved numeric GID matches the host observer's
+actual group. `DODOL_GID` also supplies the bridge socket group, so do not
+change it without checking both consumers. With a valid positive numeric GID,
+the mirror is atomically replaced by a new inode owned by `root:<GID>` with
+mode `0640`: group members can read it, while other users cannot. The internal
+health file remains `0600`.
+
+If the mirror GID is missing or invalid, or group assignment or atomic
+replacement fails, the host mirror is not marked successful and permissions
+are never widened as a fallback. The previous mirror is retained when
+publication fails, and only the current attempt's temporary file is eligible
+for cleanup. The host observer may report stale or unavailable data as
+`unknown`; that is not a healthy observation. A mirror failure does not make
+the bot command path depend on the observer, and Docker's internal probe uses
+its separate file.
+
+This repair does not change the host `data` directory's existing mode `0777`,
+raise observer privileges, or change the container UID. It fixes the specific
+writer/reader file-mode boundary; it does not claim protection against changes
+made by another writer to the shared parent directory.
+
+**R6.17 rollout gate:** direct execution is approved and source QA passed, but
+the final rebuilt image still needs the no-network cross-UID test: verify the
+host mirror is `root:<observer GID>` mode `0640`, UID/GID `1000` can read it, a
+different unprivileged UID cannot, the internal file remains `0600`, and
+repeated atomic replacement and group-assignment failure preserve these
+properties. Do not recreate bot `004` until this final-image gate passes. The
+prior R6.16 fixture reproduced the old `root:root 0600` failure; it was not a
+production mirror read test. See
+[`docs/slack-runtime-permissions-r617.md`](docs/slack-runtime-permissions-r617.md)
+for the detailed contract and gate.
 
 ---
 

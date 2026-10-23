@@ -11,6 +11,7 @@ x-runtime-environment: &runtime-environment
   BOTAM_WEB_BRIDGE_ENABLED: "1"
   BOTAM_BRIDGE_GID: ${DODOL_GID:-1000}
   BOT_RUNTIME_HEALTH_DIR: /app/data
+  BOT_RUNTIME_HEALTH_GID: ${DODOL_GID:-1000}
 
 services:
   dodol-bot-001:
