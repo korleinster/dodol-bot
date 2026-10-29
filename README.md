@@ -41,7 +41,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 | Item | Details |
 |---|---|
 | Language | Python 3.11 |
-| Bot framework | discord.py[voice] 2.7.1 |
+| Bot framework | discord.py 2.7.1 with explicit voice dependencies |
 | Voice encryption | DAVE via the required `davey` runtime dependency |
 | TTS | Per-bot Edge Neural `SunHi` with one gTTS fallback |
 | Database | SQLite + aiosqlite |
@@ -57,7 +57,7 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 
 The [2026-10-29 security rebuild](docs/security-maintenance-2026-10-29.md)
 updates the HTTP client, voice cryptography, environment loader, and CA trust
-store. Runtime images omit builder-only package installers.
+store. The application virtual environment omits package installers.
 
 ```bash
 # Create Python 3.11 virtual environment
@@ -85,9 +85,9 @@ cp .env.example .env
 python main.py
 ```
 
-> **FFmpeg required** — used for TTS audio playback. `discord.py[voice]==2.7.1`
-> also requires the voice extras (including PyNaCl) and the `davey` package for
-> Discord's DAVE voice encryption. Verify both before testing voice.
+> **FFmpeg required** — used for TTS audio playback. Install the complete
+> `requirements.txt`, including `discord.py==2.7.1`, `PyNaCl==1.6.2` and
+> `davey==0.1.6` for Discord's DAVE voice encryption. Verify them before testing voice.
 > macOS: `brew install ffmpeg` / Ubuntu: `apt install ffmpeg`
 
 The dependency check is intentionally explicit because `discord.py` 2.7.1
