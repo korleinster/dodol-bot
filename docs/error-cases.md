@@ -2,6 +2,46 @@
 
 각 상황에서 봇이 어떻게 동작하는지 정리.
 
+## Slack migration — Revision 5 local status (2026-10-12)
+
+Revision 5 (`SLACK-R5-CORRECTIVE-20261012`) is locally implemented and frozen;
+independent QA **PASSED** the local line-boundary and credential-redaction
+scope. The focused notifier suite passed 19/19 and the full Discord suite
+passed 124/124 under Python 3.12.14. The original R3 multiword Authorization
+and R4 next-line Korean-loss regressions pass unchanged. A separate nine-case
+dual-fake-transport matrix preserved benign Korean text, safe URLs, and line
+endings while removing every fake credential word from both payloads and the
+deduplication key; idempotence and the 3,000-character cap passed. Compilation,
+shell syntax, tracked-secret scan, and diff checks passed.
+
+The parent separately passed official Compose 5.5.1 static checks for
+telegram/slack/dual with fake inputs and an empty environment; QA did not rerun
+Compose, and no daemon/container was used. No Slack provisioning, real
+credentials or messages, deployment/restart, or provider cutover occurred.
+Telegram remains the active default and control provider; live operational
+acceptance remains a separate approval and verification gate.
+
+### Revision 4 QA finding — historical BLOCKED result
+
+R4 independent QA found next-line benign text loss in an unclosed-quote case:
+122 full tests = 121 pass + 1 failure; focused tests = 16 pass + 1 failure.
+R5 fixes this regression; the historical R4 disposition is preserved.
+
+### Revision 3 QA finding — historical BLOCKED result
+
+R3 independent QA found one quoted multiword Authorization value persisted in
+fake Telegram/Slack payloads and the deduplication key: 119 full tests = 118
+pass + 1 unexpected failure; focused tests = 13 pass + 1 failure. R4 corrected
+that leak. R4's final QA remains blocked by the distinct line-boundary content
+loss documented above.
+
+### Historical R2 QA finding (2026-10-08)
+
+The prior cross-surface probe found representative fake JSON, cookie,
+`passwd`, and quoted-password forms were not fully redacted. No real credential
+exposure was observed or implied. This finding led to the approved R3 scope and
+is retained here as history, not as an unresolved current implementation gap.
+
 ---
 
 ## 채널 미배치 상태
@@ -170,3 +210,36 @@ if at < now():
 if base_time > now() + timedelta(minutes=1):
     base_time -= timedelta(days=1)
 ```
+
+## Runtime-health 미러 권한 실패 (R6.17)
+
+내부 Docker health 파일과 호스트 observer용 미러는 별도 파일이다. 내부
+파일은 계속 mode `0600`이며 Docker probe가 읽는다. 호스트 미러는
+`/app/data/runtime-health-NNN.json`이고, Compose의
+`BOT_RUNTIME_HEALTH_GID`가 지정 그룹과 mode `0640`을 설정한다. 이 값은
+`DODOL_GID`에서 오며 기본값은 `1000`이다. 재생성 전 resolved GID와 실제
+observer 그룹을 확인한다. `DODOL_GID`는 bridge socket group에도 쓰이므로
+두 소비자를 함께 점검한다.
+
+| 상황 | 동작 |
+|---|---|
+| `BOT_RUNTIME_HEALTH_GID` 누락·0·잘못된 형식·지원 범위 밖 | 호스트 미러를 게시하지 않는다. 내부 Docker health 파일은 계속 독립적으로 사용한다. 오래된 미러가 남더라도 freshness가 지나면 observer 상태는 `unknown`이다. |
+| 그룹 변경 권한 부족 또는 `chgrp`/`fchown` 실패 | 미러 권한을 넓히거나 성공으로 추정하지 않는다. 기존 미러를 보존하고 이번 시도의 임시 inode만 정리한다. |
+| 원자 교체 실패 | 기존 미러를 보존하고 실패한 새 값으로 성공 표시하지 않는다. |
+| 미러가 없거나 stale, observer가 읽을 수 없음 | 상태를 `unknown`으로 취급한다. `unknown`은 건강 확인 PASS가 아니다. |
+
+정상 게시마다 새 임시 inode를 만들어 `root:<GID>`와 `0640`을 설정한 뒤
+정해진 bot별 경로에 원자적으로 교체한다. 내부 파일은 `0600`을 유지한다.
+Observer 권한이나 봇 컨테이너 UID를 변경하지 않고, 공유 `data` 부모의
+기존 `0777` 권한도 이 변경으로 고치지 않는다. 부모 디렉터리의 무결성까지
+보장한다고 주장하지 않는다.
+
+**R6.17 상태:** 승인된 소스 수정과 prepublication source QA는 PASS다.
+최종 새 이미지의 실제 root-to-observer 권한 검증은 아직 남아 있으므로
+004를 포함한 봇 재생성을 시작하지 않는다. 격리 이미지 시험에서
+host `root:<observer GID> 0640`, observer UID/GID `1000`의 읽기 성공, 다른
+비권한 UID 읽기 거부, 내부 `0600`, 반복 원자 교체, 그룹 변경 실패 시 기존
+미러 보존을 모두 확인해야 한다. 기존 R6.16 시험은 이전 이미지에서
+`root:root 0600` 경계를 재현했으며, 운영 미러의 실수신 시험은 아니었다.
+상세 계약은 [`slack-runtime-permissions-r617.md`](slack-runtime-permissions-r617.md)
+에 있다.

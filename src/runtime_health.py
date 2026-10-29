@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,8 @@ from typing import Any
 
 HEALTH_FILE_ENV = "BOT_HEALTH_PATH"
 DEFAULT_HEALTH_FILE = "/tmp/dodol-bot-health.json"
+RUNTIME_HEALTH_DIR_ENV = "BOT_RUNTIME_HEALTH_DIR"
+RUNTIME_HEALTH_GID_ENV = "BOT_RUNTIME_HEALTH_GID"
 VOICE_STATES = frozenset({"unconfigured", "connecting", "connected", "recovering", "unavailable"})
 SCHEDULER_READY = "ready"
 
@@ -232,17 +236,115 @@ def health_file_path() -> Path:
     return Path(os.getenv(HEALTH_FILE_ENV, DEFAULT_HEALTH_FILE))
 
 
+def host_visible_health_path(bot: Any) -> Path | None:
+    """Select only the bot's own fixed file in the explicitly mounted data dir."""
+    directory = os.getenv(RUNTIME_HEALTH_DIR_ENV, "")
+    number = getattr(bot, "bot_number", None)
+    if not directory or type(number) is not int or number not in {1, 2, 3, 4}:
+        return None
+    return Path(directory) / f"runtime-health-{number:03d}.json"
+
+
+def host_visible_health_payload(bot: Any) -> dict[str, Any]:
+    """Minimal, non-secret observer input; freshness is based on observedAt."""
+    scheduler = getattr(bot, "scheduler_health", None)
+    scheduler = scheduler if isinstance(scheduler, dict) else {}
+    status = scheduler.get("status")
+    if status not in {"ready", "starting", "failed"}:
+        status = "starting"
+    runtime = runtime_health_payload(bot)
+    return {
+        "version": 1,
+        "botNumber": bot.bot_number,
+        "observedAt": _now_ms(),
+        "discord": runtime["discord"],
+        "schedulerStatus": status,
+        "schedulerLastTickAt": _safe_timestamp(scheduler.get("lastTickAt")),
+        "status": application_health_payload(bot)["status"],
+    }
+
+
+def host_visible_health_gid() -> int | None:
+    """Require an explicit, canonical positive group ID for the host mirror."""
+    raw = os.getenv(RUNTIME_HEALTH_GID_ENV, "")
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", raw):
+        return None
+    value = int(raw)
+    return value if value < 2**32 - 1 else None
+
+
+def _atomic_write(path: Path, payload: dict[str, Any], *, mirror_gid: int | None = None) -> None:
+    """Publish a new inode; never open a pre-existing temporary path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = f".{path.name}.{os.getpid()}.{secrets.token_hex(16)}.tmp"
+    descriptor = None
+    own_inode = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory_fd,
+        )
+        own_stat = os.fstat(descriptor)
+        own_inode = (own_stat.st_dev, own_stat.st_ino)
+        data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        while data:
+            count = os.write(descriptor, data)
+            if count <= 0:
+                raise OSError("health file write failed")
+            data = data[count:]
+        if mirror_gid is not None:
+            os.fchown(descriptor, 0, mirror_gid)
+            os.fchmod(descriptor, 0o640)
+        else:
+            os.fchmod(descriptor, 0o600)
+        os.fsync(descriptor)
+        completed_descriptor = descriptor
+        descriptor = None
+        os.close(completed_descriptor)
+        # The shared data directory is outside this file's integrity contract,
+        # but do not knowingly publish a swapped temporary inode.
+        current = os.stat(temporary, dir_fd=directory_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != own_inode:
+            raise OSError("health temporary file changed")
+        os.replace(temporary, path.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+    finally:
+        try:
+            if descriptor is not None:
+                os.close(descriptor)
+        finally:
+            try:
+                if own_inode is not None:
+                    try:
+                        current = os.stat(temporary, dir_fd=directory_fd, follow_symlinks=False)
+                        if (current.st_dev, current.st_ino) == own_inode:
+                            os.unlink(temporary, dir_fd=directory_fd)
+                    except FileNotFoundError:
+                        pass
+            finally:
+                os.close(directory_fd)
+
+
 def write_health_file(bot: Any) -> None:
     """Atomically publish a tiny health snapshot; errors leave the probe unhealthy."""
     path = health_file_path()
     payload = application_health_payload(bot)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        os.chmod(temporary, 0o600)
-        temporary.replace(path)
+        _atomic_write(path, payload)
     except OSError:
         # Health publication failure must not take down bot commands. Docker
         # sees the missing/stale file and marks the process unhealthy instead.
         return
+    mirror = host_visible_health_path(bot)
+    if mirror is not None:
+        gid = host_visible_health_gid()
+        if gid is None:
+            return
+        try:
+            _atomic_write(mirror, host_visible_health_payload(bot), mirror_gid=gid)
+        except (OSError, OverflowError):
+            # Local Docker probe and bot execution must not depend on the
+            # separate host observer's mount permissions.
+            pass
