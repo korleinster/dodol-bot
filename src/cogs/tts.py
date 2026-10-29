@@ -28,7 +28,7 @@ RESTART_KW = {"정신차려", "재시작"}
 VOICE_RUNTIME_VERSIONS = {
     "discord.py": "2.7.1",
     "davey": "0.1.6",
-    "PyNaCl": "1.5.0",
+    "PyNaCl": "1.6.2",
 }
 EDGE_TTS_TIMEOUT_SECONDS = 20
 DEFAULT_EDGE_VOICE = "ko-KR-SunHiNeural"
