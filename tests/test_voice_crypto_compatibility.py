@@ -1,5 +1,6 @@
 """Exercise the actual Discord RTP cryptography with patched PyNaCl."""
 import unittest
+from types import SimpleNamespace
 import discord
 import discord.voice_client
 import discord.voice_state
@@ -11,7 +12,7 @@ class VoiceCryptoCompatibilityTest(unittest.TestCase):
         self.assertTrue(discord.voice_client.has_nacl)
         self.assertTrue(discord.voice_state.has_dave)
         client = discord.VoiceClient.__new__(discord.VoiceClient)
-        client.secret_key = list(range(32))
+        client._connection = SimpleNamespace(secret_key=list(range(32)))
         client._incr_nonce = 1
         header = bytes([0x80, 0x78]) + bytes(10)
         payload = b"offline-opus-compatibility"
