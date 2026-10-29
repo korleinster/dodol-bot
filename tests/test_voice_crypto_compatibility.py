@@ -23,3 +23,13 @@ class VoiceCryptoCompatibilityTest(unittest.TestCase):
         self.assertEqual(client._incr_nonce, 2)
         with self.assertRaises(nacl.exceptions.CryptoError):
             box.decrypt(encrypted[12:-4], bytes(12), nonce)
+
+    def test_patched_packages_are_accepted_by_application_gate(self):
+        from unittest.mock import patch
+        from src.cogs import tts
+        tts.detect_voice_runtime_capability.cache_clear()
+        try:
+            with patch.object(tts.shutil, "which", return_value="/test/ffmpeg"):
+                self.assertEqual(tts.detect_voice_runtime_capability(), (True, "VOICE_RUNTIME_READY"))
+        finally:
+            tts.detect_voice_runtime_capability.cache_clear()

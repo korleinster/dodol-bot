@@ -116,7 +116,7 @@ class VoiceRuntimeCapabilityTest(unittest.IsolatedAsyncioTestCase):
         versions = {
             "discord.py": "2.7.1",
             "davey": "0.1.6",
-            "PyNaCl": "1.5.0",
+            "PyNaCl": "1.6.2",
         }
         with (
             patch.object(tts_module.importlib.metadata, "version", side_effect=versions.__getitem__),
@@ -132,7 +132,7 @@ class VoiceRuntimeCapabilityTest(unittest.IsolatedAsyncioTestCase):
         versions = {
             "discord.py": "2.6.4",
             "davey": "0.1.6",
-            "PyNaCl": "1.5.0",
+            "PyNaCl": "1.6.2",
         }
         with patch.object(
             tts_module.importlib.metadata,

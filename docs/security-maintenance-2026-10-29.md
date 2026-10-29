@@ -24,3 +24,10 @@ confirmed compatibility guidance:
 https://github.com/Rapptz/discord.py/discussions/10425
 The offline suite exercises Discord's actual RTP AEAD encryptor, authenticated
 decryption, and DAVE import without connecting to or sending audio to Discord.
+
+The application's pinned voice capability check is aligned with PyNaCl 1.6.2.
+Image construction now fails unless the real installed versions, voice imports
+and ffmpeg pass that gate; a regression test checks actual package metadata.
+During the first live gate, bot 003 rejected the old application pin and was
+restored before retry. The corrected release is revalidated and rolled through
+all four bots in the required order.

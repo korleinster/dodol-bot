@@ -30,6 +30,7 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY main.py .
 COPY src ./src
+RUN python -c "from src.cogs.tts import detect_voice_runtime_capability; assert detect_voice_runtime_capability() == (True, 'VOICE_RUNTIME_READY')"
 
 # 빌드 시 git 커밋 해시 주입 (docker compose build --build-arg GIT_COMMIT=... 또는 자동 전달)
 ARG GIT_COMMIT=unknown
