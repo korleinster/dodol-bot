@@ -31,3 +31,21 @@ and ffmpeg pass that gate; a regression test checks actual package metadata.
 During the first live gate, bot 003 rejected the old application pin and was
 restored before retry. The corrected release is revalidated and rolled through
 all four bots in the required order.
+
+## Production acceptance (verified 2026-10-30 KST)
+
+All four Mac Mini bots now run application commit
+`1616747891d8d57bb061739cf3f069b8ec05b5fa` in image
+`sha256:1c2e42741ef32e6f3959a87265e03ba3509717f07c9b722fef9f2b3899b3f0c0`.
+The corrected release passed 138 offline Linux tests and remote CI. It was
+rolled out in order 004, 001, 002, 003 with preserved per-service Compose
+overrides and verified SQLite backup. All four containers have restart count
+zero, Docker health healthy, Discord ready, scheduler ready, and authenticated
+bridge health/target checks passed. Bot 003's configured voice is connected;
+the other bots correctly report voice unconfigured. Live SQLite quick_check
+is ok. No test Discord message, audio playback, or DB reset was sent.
+
+Private backup and per-bot image overrides are retained under
+`/var/backups/codex-security-20261029/20261029T033243Z/bot-rollout-v2`.
+The earlier failed voice gate and rollback remain recorded separately.
+Documentation commits after this runtime commit do not require image rebuilds.
