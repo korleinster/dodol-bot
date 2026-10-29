@@ -55,6 +55,10 @@ A Discord bot for Lineage 2M that provides boss kill/miss/reservation management
 
 ## Local Development
 
+The [2026-10-29 security rebuild](docs/security-maintenance-2026-10-29.md)
+updates the HTTP client, voice cryptography, environment loader, and CA trust
+store. Runtime images omit builder-only package installers.
+
 ```bash
 # Create Python 3.11 virtual environment
 python3.11 -m venv venv
