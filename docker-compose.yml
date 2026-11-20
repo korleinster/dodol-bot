@@ -19,7 +19,7 @@ services:
       context: .
       args:
         GIT_COMMIT: ${GIT_COMMIT:-unknown}
-    image: dodol-bot:latest
+    image: dodol-bot:r2-64d1b5c
     restart: always
     environment:
       <<: *runtime-environment
@@ -46,7 +46,7 @@ services:
         max-file: "5"
 
   dodol-bot-002:
-    image: dodol-bot:latest
+    image: dodol-bot:r2-64d1b5c
     restart: always
     environment:
       <<: *runtime-environment
@@ -73,7 +73,7 @@ services:
         max-file: "5"
 
   dodol-bot-003:
-    image: dodol-bot:latest
+    image: dodol-bot:r2-64d1b5c
     restart: always
     environment:
       <<: *runtime-environment
@@ -100,7 +100,7 @@ services:
         max-file: "5"
 
   dodol-bot-004:
-    image: dodol-bot:latest
+    image: dodol-bot:r2-64d1b5c
     restart: always
     environment:
       <<: *runtime-environment
